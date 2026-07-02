@@ -1,0 +1,7 @@
+{
+    "python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe",
+    "jupyter.kernels.filterEnabled": true,
+    "python.analysis.extraPaths": [
+        "${workspaceFolder}/.venv/Lib/site-packages"
+    ]
+}
