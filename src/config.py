@@ -7,13 +7,13 @@ FS = 12000               # Tần số lấy mẫu (Hz) — CWRU 12kHz Drive End
 WINDOW_SIZE = 1024        # Kích thước cửa sổ cắt segment (N). Fs/N = 12000/1024 ~ 11.7 Hz/bin
 OVERLAP = 0.5             # Tỉ lệ chồng lấp (50%)
 
+# Dải lọc Bandpass cho Square-Law Demodulation (Vùng cộng hưởng cơ học CWRU)
+DEMOD_BANDPASS_LOW = 2000.0   # Hz
+DEMOD_BANDPASS_HIGH = 5000.0  # Hz
+DEMOD_LOWPASS_CUTOFF = 500.0  # Hz (Đủ lấy đường bao chứa BPFI/BPFO < 200Hz)
+
 # Dải năng lượng miền tần số — LOG-SPACED (không phải linear)
-# Lý do: BPFI/BPFO/BSF đều nằm dưới 200Hz, linear-binning sẽ nén hết
-# vùng quan trọng này vào 1 bin. Log-spacing cấp nhiều bin hơn ở tần số thấp.
 FREQ_BAND_EDGES = [0.0, 50.0, 100.0, 200.0, 400.0, 800.0, 1600.0, 3200.0, 6000.0]  # Hz, 8 dải
-# → dải đầu (0-50Hz) rất hẹp, đúng vùng chứa fr và BSF (~30-70Hz)
-# → dải giữa (100-200Hz) chứa BPFO/BPFI
-# → dải cuối rộng dần, ít quan trọng hơn cho fault detection
 
 # 2. Thông số hình học vòng bi SKF 6205 (Drive End)
 # Các hệ số này nhân với tần số quay của trục (fr) sẽ ra tần số lỗi
