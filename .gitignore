@@ -3,4 +3,5 @@
 .gitignore.bak
 __pycache__/
 *.py[cod]
+.vscode/
 .venv/
