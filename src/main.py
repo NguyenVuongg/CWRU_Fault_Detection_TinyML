@@ -12,9 +12,9 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 
 import tensorflow as tf
-from tensorflow.keras import Sequential
-from tensorflow.keras.layers import Dense, Dropout, Input
-from tensorflow.keras.callbacks import EarlyStopping
+from keras import Sequential
+from keras.layers import Dense, Dropout, Input
+from keras.callbacks import EarlyStopping
 
 from src import config
 from src.dataset import CWRUDataPipeline, split_files_random
@@ -98,9 +98,9 @@ def train_and_eval_mlp(X_train: pd.DataFrame, y_train: pd.Series, X_test: pd.Dat
     es = EarlyStopping(monitor='val_loss', patience=15, restore_best_weights=True, verbose=0)
     
     model.fit(X_tr_scaled, y_tr, validation_data=(X_val_scaled, y_val),
-              epochs=100, batch_size=32, callbacks=[es], verbose=0)
+              epochs=100, batch_size=32, callbacks=[es], verbose="0")
     
-    y_pred = np.argmax(model.predict(X_test_scaled, verbose=0), axis=1)
+    y_pred = np.argmax(model.predict(X_test_scaled, verbose="0"), axis=1)
     acc = float(accuracy_score(y_test, y_pred))
     f1 = float(f1_score(y_test, y_pred, average='macro'))
     
