@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bearing-diagnosis-common"
+version = "0.1.0"
+description = "Thư viện dùng chung cho đề tài NCKH: Hệ thống Chẩn đoán Lỗi Vòng bi Động cơ bằng Edge AI"
+requires-python = ">=3.9"
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "pandas>=2.0",
+    "matplotlib>=3.7",
+    "scikit-learn>=1.3",
+]
+
+[project.optional-dependencies]
+# Chỉ cần cho Giai đoạn 2 trở đi (MLP/CNN1D, lượng tử hóa INT8)
+dl = ["tensorflow-cpu>=2.16"]
+
+[tool.setuptools]
+packages = ["common"]
