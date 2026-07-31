@@ -18,6 +18,9 @@ dependencies = [
 [project.optional-dependencies]
 # Chỉ cần cho Giai đoạn 2 trở đi (MLP/CNN1D, lượng tử hóa INT8)
 dl = ["tensorflow-cpu>=2.16"]
+# Chỉ cần nếu muốn Pylance/pyright type-check chặt như đã kiểm chứng khi
+# dựng project này — KHÔNG cần để chạy code, chỉ hỗ trợ khi code trong VS Code
+dev = ["scipy-stubs>=1.16"]
 
 [tool.setuptools]
 packages = ["common"]

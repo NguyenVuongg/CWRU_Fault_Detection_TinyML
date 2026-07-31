@@ -1,0 +1,14 @@
+Metadata-Version: 2.4
+Name: bearing-diagnosis-common
+Version: 0.1.0
+Summary: Thư viện dùng chung cho đề tài NCKH: Hệ thống Chẩn đoán Lỗi Vòng bi Động cơ bằng Edge AI
+Requires-Python: >=3.9
+Requires-Dist: numpy>=1.24
+Requires-Dist: scipy>=1.10
+Requires-Dist: pandas>=2.0
+Requires-Dist: matplotlib>=3.7
+Requires-Dist: scikit-learn>=1.3
+Provides-Extra: dl
+Requires-Dist: tensorflow-cpu>=2.16; extra == "dl"
+Provides-Extra: dev
+Requires-Dist: scipy-stubs>=1.16; extra == "dev"

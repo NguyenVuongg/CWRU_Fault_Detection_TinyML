@@ -1,0 +1,3 @@
+,accuracy,f1_macro,n_train,n_test
+Random Window Split (SAI),0.9863829787234043,0.9858329068552418,8227.0,3525.0
+File-based Split (ĐÚNG),0.8740031897926634,0.8532459054645543,7990.0,3762.0

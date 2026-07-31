@@ -13,26 +13,32 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, f1_score
 
 
-def random_window_split(feature_df, test_ratio=0.3, seed=42):
+def random_window_split(feature_df: pd.DataFrame, test_ratio: float = 0.3,
+                         seed: int = 42) -> tuple[pd.DataFrame, pd.DataFrame]:
     """SAI CÁCH LÀM (cố ý) — chia ngẫu nhiên theo dòng window, bỏ qua
     file_id. Windows từ cùng 1 file có thể rơi cả vào train và test."""
     rng = np.random.RandomState(seed)
     idx = feature_df.index.to_numpy().copy()
     rng.shuffle(idx)
     n_test = int(len(idx) * test_ratio)
-    return feature_df.loc[idx[n_test:]], feature_df.loc[idx[:n_test]]
+    train_df: pd.DataFrame = feature_df.loc[idx[n_test:]]
+    test_df: pd.DataFrame = feature_df.loc[idx[:n_test]]
+    return train_df, test_df
 
 
-def file_based_split(feature_df, test_ratio=0.3, seed=42):
+def file_based_split(feature_df: pd.DataFrame, test_ratio: float = 0.3,
+                      seed: int = 42) -> tuple[pd.DataFrame, pd.DataFrame]:
     """ĐÚNG CÁCH LÀM — chia theo file_id trước. Không file nào vừa ở
     train vừa ở test."""
     rng = np.random.RandomState(seed)
     file_ids = np.array(feature_df["file_id"].unique().tolist(), dtype=object)
     rng.shuffle(file_ids)
     n_test_files = max(1, int(len(file_ids) * test_ratio))
-    test_files = set(file_ids[:n_test_files])
+    test_files = list(file_ids[:n_test_files])
     train_mask = ~feature_df["file_id"].isin(test_files)
-    return feature_df[train_mask], feature_df[~train_mask]
+    train_df: pd.DataFrame = feature_df.loc[train_mask]
+    test_df: pd.DataFrame = feature_df.loc[~train_mask]
+    return train_df, test_df
 
 
 def run_split_comparison_experiment(feature_df, feature_cols, seed=42):
@@ -64,4 +70,4 @@ def generate_lolo_folds(loads=(0, 1, 2, 3)):
     """Cấu trúc 4 fold LOLO đúng mục 2.1. Trả về list dict
     {'test_load': X, 'trainval_loads': [...]}. IMPORT LẠI hàm này ở
     Giai đoạn 1-2, không viết lại lần thứ hai."""
-    return [{"test_load": t, "trainval_loads": [l for l in loads if l != t]} for t in loads]
+    return [{"test_load": t, "trainval_loads": [l for l in loads if l != t]} for t in loads]    

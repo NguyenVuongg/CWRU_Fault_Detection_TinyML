@@ -38,3 +38,32 @@ def hilbert_envelope(x, fs, band=(1000, 4000)):
     thế nó, xem RQ4/H4 — so sánh tài nguyên thật để ở Giai đoạn 3)."""
     filtered = bandpass_filter(x, fs, band[0], band[1])
     return np.abs(np.asarray(hilbert(filtered)))
+
+def compute_fft(x, fs):
+    """
+    Tính toán phổ biên độ (FFT) của tín hiệu rời rạc.
+    
+    Args:
+        x (array-like): Mảng tín hiệu đầu vào.
+        fs (float): Tần số lấy mẫu (Hz).
+        
+    Returns:
+        tuple: (freqs, mag)
+            - freqs: Mảng các giá trị tần số (Hz).
+            - mag: Mảng biên độ (magnitude) tương ứng.
+    """
+    N = len(x)
+    
+    # Dùng rfft (Real FFT) tối ưu hơn cho tín hiệu thực so với fft thông thường
+    freqs = np.fft.rfftfreq(N, d=1.0/fs)
+    fft_values = np.fft.rfft(x)
+    
+    # Tính biên độ (Magnitude) và chuẩn hóa năng lượng theo N
+    mag = np.abs(fft_values) * 2.0 / N
+    
+    # Thành phần DC (tần số 0 Hz) và thành phần Nyquist (nếu N chẵn) không nhân 2
+    mag[0] /= 2.0
+    if N % 2 == 0:
+        mag[-1] /= 2.0
+        
+    return freqs, mag
