@@ -1,0 +1,2 @@
+accuracy_mean,accuracy_std,f1_macro_mean,f1_macro_std,n_folds
+1.0,0.0,1.0,0.0,4

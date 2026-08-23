@@ -46,8 +46,8 @@ def run_split_comparison_experiment(feature_df, feature_cols, seed=42):
     bằng chứng thực nghiệm sơ bộ cho RQ1/H1."""
     results = {}
     for name, split_fn in [
-        ("Random Window Split (SAI)", random_window_split),
-        ("File-based Split (ĐÚNG)", file_based_split),
+        ("Random Window Split", random_window_split),
+        ("File-based Split", file_based_split),
     ]:
         train_df, test_df = split_fn(feature_df, seed=seed)
         X_train, y_train = train_df[feature_cols], train_df["label"]
@@ -63,11 +63,10 @@ def run_split_comparison_experiment(feature_df, feature_cols, seed=42):
             "n_train": len(train_df),
             "n_test": len(test_df),
         }
-    return pd.DataFrame(results).T
+    return pd.DataFrame(results).T.reset_index(names=["split_method"])
 
 
 def generate_lolo_folds(loads=(0, 1, 2, 3)):
     """Cấu trúc 4 fold LOLO đúng mục 2.1. Trả về list dict
-    {'test_load': X, 'trainval_loads': [...]}. IMPORT LẠI hàm này ở
-    Giai đoạn 1-2, không viết lại lần thứ hai."""
+    {'test_load': X, 'trainval_loads': [...]}."""
     return [{"test_load": t, "trainval_loads": [l for l in loads if l != t]} for t in loads]    
