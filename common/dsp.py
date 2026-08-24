@@ -37,16 +37,7 @@ def square_law_envelope(x, fs, band=(2300, 4000), lp_cutoff=500, lp_order=2):
 
 
 def hilbert_envelope(x, fs, band=(2300  , 3800)):
-    """Envelope[n] = LowPass( (BandPass(x))² )
-
-    band=(2300, 4000) đã chốt qua thực nghiệm Giai đoạn 1:
-      - Chặn f_rot (~30 Hz) khỏi lọt vào envelope
-      - Giữ vùng cộng hưởng cơ học chính của CWRU DE 12kHz
-      - Đã kiểm chứng chéo trên IR/OR/B ở các đường kính 7-21 mils
-
-    Dùng filtfilt (zero-phase) cho offline feature extraction.
-    Khi triển khai MCU (Giai đoạn 3), thay bằng lfilter (causal)."""
-    
+    """Envelope[n] = |Hilbert( BandPass(x) )|"""  
     filtered = bandpass_filter(x, fs, band[0], band[1])
     return np.abs(np.asarray(hilbert(filtered)))
 

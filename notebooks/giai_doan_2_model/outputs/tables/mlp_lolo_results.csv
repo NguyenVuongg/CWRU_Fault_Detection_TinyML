@@ -1,5 +1,0 @@
-fold,test_load,float_accuracy,float_f1,int8_accuracy,epochs
-test_load_0,0,0.699999988079071,0.6916666666666667,0.9,100
-test_load_1,1,1.0,1.0,1.0,100
-test_load_2,2,1.0,1.0,1.0,100
-test_load_3,3,0.8999999761581421,0.9142857142857143,0.8,100

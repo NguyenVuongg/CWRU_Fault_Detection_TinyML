@@ -64,7 +64,7 @@ def build_cnn1d_raw(
     return model
 
 # CNN1D — học từ ENVELOPE (Square-Law, đã downsample)
-
+"""
 def build_cnn1d_env(
     window_size: int = 1024,
     n_classes: int = 4,
@@ -94,6 +94,49 @@ def build_cnn1d_env(
             padding="same",
             name="conv1d_2"
         ),
+        layers.GlobalAveragePooling1D(name="global_avg_pool"),
+        layers.Dense(n_classes, activation="softmax", name="output"),
+    ], name=name)
+    return model"""
+
+def build_cnn1d_env(
+    window_size: int = 1024,
+    n_classes: int = 4,
+    conv1_filters: int = 8,
+    conv1_kernel: int = 32,
+    pool_size: int = 2,
+    conv2_filters: int = 16,
+    conv2_kernel: int = 8,
+    name: str = "cnn1d_envelope"
+) -> Model: 
+    model = Sequential([
+        Input(shape=(window_size, 1), name="envelope"),
+        
+        # Block 1: Bỏ strides=2 để không làm mất thông tin đỉnh sóng
+        layers.Conv1D(
+            conv1_filters,
+            conv1_kernel,
+            strides=1,
+            padding="same",
+            use_bias=False,
+            name="conv1d_1"
+        ),
+        layers.BatchNormalization(name="bn_1"),
+        layers.Activation("relu", name="relu_1"),
+        layers.MaxPooling1D(pool_size=pool_size, name="maxpool_1"),
+        
+        # Block 2
+        layers.Conv1D(
+            conv2_filters,
+            conv2_kernel,
+            padding="same",
+            use_bias=False,
+            name="conv1d_2"
+        ),
+        layers.BatchNormalization(name="bn_2"),
+        layers.Activation("relu", name="relu_2"),
+        
+        # Output
         layers.GlobalAveragePooling1D(name="global_avg_pool"),
         layers.Dense(n_classes, activation="softmax", name="output"),
     ], name=name)
