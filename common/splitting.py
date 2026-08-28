@@ -27,17 +27,32 @@ def random_window_split(feature_df: pd.DataFrame, test_ratio: float = 0.3,
 
 
 def file_based_split(feature_df: pd.DataFrame, test_ratio: float = 0.3,
-                      seed: int = 42) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """ĐÚNG CÁCH LÀM — chia theo file_id trước. Không file nào vừa ở
-    train vừa ở test."""
+                      seed: int = 42, stratify_col: str = "label") -> tuple[pd.DataFrame, pd.DataFrame]:
+    """ĐÚNG CÁCH LÀM — chia theo file_id trước, có stratify theo
+    `stratify_col` (mặc định "label"). Không file nào vừa ở train vừa ở
+    test.
+    """
     rng = np.random.RandomState(seed)
-    file_ids = np.array(feature_df["file_id"].unique().tolist(), dtype=object)
-    rng.shuffle(file_ids)
-    n_test_files = max(1, int(len(file_ids) * test_ratio))
-    test_files = list(file_ids[:n_test_files])
-    train_mask = ~feature_df["file_id"].isin(test_files)
-    train_df: pd.DataFrame = feature_df.loc[train_mask]
-    test_df: pd.DataFrame = feature_df.loc[~train_mask]
+
+    file_label = (feature_df[["file_id", stratify_col]]
+                  .drop_duplicates("file_id")
+                  .set_index("file_id")[stratify_col])
+
+    test_files: list = []
+    for _, group in file_label.groupby(file_label):
+        ids = group.index.to_numpy().copy()
+        rng.shuffle(ids)
+        if len(ids) <= 1:
+            n_test = 0  # giữ file duy nhất ở train, tránh mất trắng nhãn đó
+        else:
+            n_test = max(1, int(round(len(ids) * test_ratio)))
+            n_test = min(n_test, len(ids) - 1)  # luôn chừa >=1 file ở train
+        test_files.extend(ids[:n_test])
+
+    test_files_set = set(test_files)
+    train_mask = ~feature_df["file_id"].isin(test_files_set)
+    train_df: pd.DataFrame = feature_df.loc[train_mask].reset_index(drop=True)
+    test_df: pd.DataFrame = feature_df.loc[~train_mask].reset_index(drop=True)
     return train_df, test_df
 
 
@@ -69,4 +84,4 @@ def run_split_comparison_experiment(feature_df, feature_cols, seed=42):
 def generate_lolo_folds(loads=(0, 1, 2, 3)):
     """Cấu trúc 4 fold LOLO đúng mục 2.1. Trả về list dict
     {'test_load': X, 'trainval_loads': [...]}."""
-    return [{"test_load": t, "trainval_loads": [l for l in loads if l != t]} for t in loads]    
+    return [{"test_load": t, "trainval_loads": [l for l in loads if l != t]} for t in loads]

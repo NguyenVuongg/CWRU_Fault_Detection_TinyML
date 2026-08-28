@@ -14,7 +14,7 @@ import numpy as np
 from .config import bearing_fault_frequencies, SKF_6205_GEOMETRY
 
 
-def amplitude_near_frequency(freqs, mag, target_freq_hz, search_width_hz=2.0):
+def amplitude_near_frequency(freqs, mag, target_freq_hz, search_width_hz=3.0):
     """
     Biên độ LỚN NHẤT trong cửa sổ [target - width, target + width] quanh
     tần số mục tiêu — bù trừ sai số nhỏ giữa RPM danh định (dùng để tính
@@ -24,11 +24,17 @@ def amplitude_near_frequency(freqs, mag, target_freq_hz, search_width_hz=2.0):
     """
     freqs = np.asarray(freqs)
     mag = np.asarray(mag)
+ 
+    if len(freqs) >= 2:
+        freq_resolution = float(freqs[1] - freqs[0])
+        min_safe_width = freq_resolution / 2.0 * 1.05  # +5% biên an toàn cho sai số làm tròn
+        if search_width_hz < min_safe_width:
+            search_width_hz = min_safe_width
+ 
     mask = (freqs >= target_freq_hz - search_width_hz) & (freqs <= target_freq_hz + search_width_hz)
     if not np.any(mask):
         return 0.0
     return float(np.max(mag[mask]))
-
 
 def extract_order_features(freqs, mag, rpm, target_names=("f_rot", "BPFO", "BPFI", "BSF"),
                             harmonics=(1, 2, 3), search_width_hz=2.0,

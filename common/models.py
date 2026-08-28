@@ -95,7 +95,7 @@ def build_cnn1d_env(
         ),
         layers.BatchNormalization(name="bn_2"),
         layers.Activation("relu", name="relu_2"),
-        
+
         # Output
         layers.GlobalAveragePooling1D(name="global_avg_pool"),
         layers.Dense(n_classes, activation="softmax", name="output"),

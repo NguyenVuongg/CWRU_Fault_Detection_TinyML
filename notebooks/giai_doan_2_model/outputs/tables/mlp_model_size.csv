@@ -1,0 +1,5 @@
+model,fold,num_parameters,tflite_size_bytes,tflite_size_kb
+MLP,test_load_0,1652,5672,5.5390625
+MLP,test_load_1,1652,5672,5.5390625
+MLP,test_load_2,1652,5672,5.5390625
+MLP,test_load_3,1652,5672,5.5390625

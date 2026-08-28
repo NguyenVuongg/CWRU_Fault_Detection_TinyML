@@ -2,13 +2,6 @@
 """
 common/synthetic.py
 =====================
-Sinh tín hiệu / file .mat GIẢ LẬP — dùng khi chưa có dữ liệu CWRU thật,
-để bạn chạy thử toàn bộ 8 notebook và xem trước hình dạng đầu ra.
-
-QUAN TRỌNG: mọi con số/kết luận rút ra từ dữ liệu giả lập chỉ có giá trị
-kiểm tra logic code, KHÔNG được dùng làm kết quả báo cáo chính thức.
-Mỗi notebook đều có cờ USE_SYNTHETIC_DATA ở cell đầu tiên — đổi thành
-False và trỏ DATA_ROOT vào dữ liệu thật khi đã sẵn sàng.
 """
 
 import shutil
@@ -58,17 +51,6 @@ _TOP_FOLDER = "12k_Drive_End_Bearing_Fault_Data"
 
 def build_synthetic_dataset(root: Path, loads=(0, 1, 2, 3), seed=0,
                              diameters_mils=(7, 14, 21), duration_sec=10.0):
-    """
-    Tạo bộ file .mat giả lập đầy đủ 4 nhãn x nhiều tải, cấu trúc thư mục
-    KHỚP ĐÚNG dữ liệu thật:
-        <root>/12k_Drive_End_Bearing_Fault_Data/
-            B/<diam>/<id>_<load>.mat
-            IR/<diam>/<id>_<load>.mat
-            OR/<diam>/@6/<id>_<load>.mat   (chỉ Centered — giữ demo "sạch",
-                                             không cố ý gài cảnh báo ở đây;
-                                             xem build_edge_case_dataset())
-            Normal/<id>_Normal_<load>.mat
-    """
     root = Path(root)
     if root.exists():
         shutil.rmtree(root)
@@ -83,9 +65,10 @@ def build_synthetic_dataset(root: Path, loads=(0, 1, 2, 3), seed=0,
         rpm = cfg.NOMINAL_RPM_BY_LOAD[load]
         fault_freqs = cfg.bearing_fault_frequencies(rpm)
 
-        # Normal
+        # Normal — đặt trực tiếp dưới root/, NGANG HÀNG với _TOP_FOLDER,
+        # không lồng bên trong (xem giải thích trong docstring ở trên).
         _, x = make_synthetic_signal(fs, duration_sec, rpm, seed=rng_seed)
-        normal_dir = top / "Normal"
+        normal_dir = root / "Normal"
         normal_dir.mkdir(parents=True, exist_ok=True)
         savemat(str(normal_dir / f"{file_id}_Normal_{load}.mat"),
                 {"X999_DE_time": x.reshape(-1, 1), "X999RPM": np.array([[rpm]])})
@@ -135,8 +118,14 @@ def build_edge_case_dataset(root: Path):
         savemat(str(d / f"{fname}.mat"), {"X999_DE_time": x.reshape(-1, 1),
                                            "X999RPM": np.array([[rpm]])})
 
-    # (A) sampling rate thật là 48kHz dù nằm trong thư mục gắn nhãn "12k"
-    save("Normal", "500_Normal_0", fs=48000, rpm=1797)
+    # (A) sampling rate thật là 48kHz dù thư mục Normal/ không khai báo tần
+    # số nào qua tên (đúng cấu trúc thật: Normal/ ngang hàng với _TOP_FOLDER,
+    # KHÔNG lồng bên trong — category="" để save() đặt file trực tiếp dưới
+    # root/, không qua _TOP_FOLDER. Đây chính là ca thật cần test: file
+    # KHÔNG có source_category, buộc phải đi qua nhánh fallback fs của
+    # io_utils.run_sanity_checks (không phải qua nhánh so khớp declared_khz
+    # như khi lồng nhầm trong _TOP_FOLDER).
+    save("Normal", "500_Normal_0", fs=48000, rpm=1797, category="")
     # (B) OR ngoài phạm vi đã chốt (Orthogonal, không phải Centered)
     save("OR/007/@3", "501_0", fs=fs_correct, rpm=1797)
     # (C) đường kính 28 mils -> vòng bi NTN

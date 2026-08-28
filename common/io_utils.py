@@ -192,6 +192,91 @@ def load_de_signal(filepath: Path):
     raise KeyError(f"Không tìm thấy biến '..._DE_time' trong {filepath_str}")
 
 
+def load_de_signal_resampled(filepath: Path, source_fs_hz, target_fs_hz: float):
+    """
+    [BỔ SUNG] Đọc tín hiệu DE rồi resample về ĐÚNG 1 tần số lấy mẫu chung
+    (target_fs_hz) cho TOÀN BỘ dataset, dựa trên `source_fs_hz` — PHẢI là
+    giá trị lấy từ cột `resolved_sample_rate_hz` của manifest (xem
+    run_sanity_checks/_resolve_sampling_rate_hz), KHÔNG phải
+    `declared_sample_rate_khz` (suy từ tên thư mục, có thể sai).
+
+    Đây là bước "xử lý sampling rate của Normal baseline trước khi đưa
+    vào manifest chính thức" mà mục 0.1 đề cương yêu cầu nhưng trước đó
+    chưa có code nào thực hiện — features_full.build_full_feature_table()
+    trước đây LUÔN giả định fs=12000Hz cho mọi file (kể cả Normal baseline
+    thực chất 48kHz), khiến toàn bộ đặc trưng Order/Envelope của lớp
+    Normal bị tính sai trục tần số.
+
+    Dùng resample_poly (FIR đa pha) thay vì scipy.signal.resample (dựa
+    trên FFT) vì resample_poly ổn định hơn với tỉ lệ hữu tỉ đơn giản như
+    48000/12000 = 4 (downsample nguyên lần) và không giả định tín hiệu
+    tuần hoàn (tránh méo ở 2 đầu đoạn tín hiệu).
+
+    Raises:
+        ValueError: nếu source_fs_hz là None/NaN — nghĩa là
+            _resolve_sampling_rate_hz() không xác định được fs thực cho
+            file này (đã bị gắn cảnh báo THOI_LUONG_BAT_THUONG). KHÔNG
+            được đoán fs trong trường hợp này — phải kiểm tra thủ công.
+    """
+    from fractions import Fraction
+    from scipy.signal import resample_poly
+
+    x = load_de_signal(filepath)
+
+    if source_fs_hz is None or (isinstance(source_fs_hz, float) and np.isnan(source_fs_hz)):
+        raise ValueError(
+            f"Không xác định được sampling rate thực (resolved_sample_rate_hz) "
+            f"cho file {filepath} — kiểm tra cảnh báo THOI_LUONG_BAT_THUONG "
+            f"trong manifest trước khi trích đặc trưng cho file này."
+        )
+
+    source_fs_hz = float(source_fs_hz)
+    target_fs_hz = float(target_fs_hz)
+
+    if round(source_fs_hz) == round(target_fs_hz):
+        return x
+
+    frac = Fraction(int(round(target_fs_hz)), int(round(source_fs_hz))).limit_denominator(1000)
+    return resample_poly(x, frac.numerator, frac.denominator)
+
+
+def _resolve_sampling_rate_hz(n_samples, target_rate_hz, candidates,
+                               expected_duration, tolerance):
+    """
+    [BỔ SUNG] Xác định tần số lấy mẫu THỰC cần dùng cho mọi tính toán DSP
+    (bandpass/lowpass/FFT/envelope) của 1 file — khác với
+    `declared_sample_rate_khz`, vốn chỉ suy ra từ TÊN THƯ MỤC và có thể
+    sai (đúng trường hợp Normal baseline 48kHz đã nêu ở mục 0.1 đề cương:
+    "Sampling rate thật của file Normal baseline... Đặc trưng Order/tần số
+    của lớp Normal lệch hoàn toàn so với 3 lớp lỗi" nếu dùng nhầm rate).
+
+    Quy tắc chọn (dựa trên thời lượng thực đo n_samples/rate ~ 10s):
+      1. Nếu chính target_rate_hz (declared, hoặc mặc định SCOPE cho
+         Normal) đã cho thời lượng hợp lý -> tin tưởng nó, dùng luôn.
+      2. Nếu không, nhưng có (>=1) rate khác trong danh sách candidates
+         cho thời lượng hợp lý -> đây là rate THỰC (declared bị sai) -> 
+         dùng rate hợp lý gần target_rate_hz nhất.
+      3. Nếu không có rate nào cho thời lượng hợp lý -> trả về None
+         (không đủ căn cứ; dòng này đã được gắn cảnh báo
+         THOI_LUONG_BAT_THUONG, cần bạn kiểm tra thủ công thay vì đoán).
+
+    Trả về None nếu n_samples không xác định (NaN) hoặc không tìm được
+    rate hợp lý nào — KHÔNG bao giờ trả về 1 con số đoán mò không có căn cứ.
+    """
+    if n_samples is None or pd.isna(n_samples):
+        return None
+
+    durations = {rate: n_samples / rate for rate in candidates}
+    plausible = [rate for rate, dur in durations.items()
+                 if abs(dur - expected_duration) <= tolerance]
+
+    if not plausible:
+        return None
+    if target_rate_hz in plausible:
+        return float(target_rate_hz)
+    return float(min(plausible, key=lambda r: abs(r - target_rate_hz)))
+
+
 def run_sanity_checks(df: pd.DataFrame) -> pd.DataFrame:
     """Thêm cột cảnh báo — KHÔNG tự xóa dòng nào, chỉ đánh dấu.
 
@@ -209,6 +294,9 @@ def run_sanity_checks(df: pd.DataFrame) -> pd.DataFrame:
     """
     df = df.copy()
     warnings_list: list[list[str]] = [[] for _ in range(len(df))]
+    # [BỔ SUNG] fs THỰC của từng file — dùng bởi io_utils.load_de_signal_resampled()
+    # và features_full.build_full_feature_table() thay vì đoán/mặc định 12000Hz.
+    resolved_fs_list: list = [None] * len(df)
 
     for i, (_, row) in enumerate(df.iterrows()):
         # --- 0. File có đọc được không? ---
@@ -257,6 +345,11 @@ def run_sanity_checks(df: pd.DataFrame) -> pd.DataFrame:
             plausible = {rate: dur for rate, dur in durations.items()
                          if abs(dur - cfg.EXPECTED_DURATION_SEC) <= cfg.DURATION_TOLERANCE_SEC}
             duration_summary = ", ".join(f"{r/1000:.0f}kHz->{d:.1f}s" for r, d in durations.items())
+
+            resolved_fs_list[i] = _resolve_sampling_rate_hz(
+                n, target_rate_hz, cfg.CANDIDATE_SAMPLING_RATES_HZ,
+                cfg.EXPECTED_DURATION_SEC, cfg.DURATION_TOLERANCE_SEC,
+            )
 
             if target_rate_hz not in plausible and plausible:
                 plausible_str = "/".join(f"{r/1000:.0f}kHz" for r in plausible)
@@ -335,7 +428,12 @@ def run_sanity_checks(df: pd.DataFrame) -> pd.DataFrame:
         #     check này, nhóm 48k_Drive_End chỉ bị loại "may rủi" nhờ ăn
         #     theo check thời lượng, không phải quyết định phạm vi rõ ràng)
         declared_rate = row.get("declared_sample_rate_khz")
-        target_rate = cfg.SCOPE.get("target_sample_rate_khz", 12)
+        # BUG ĐÃ SỬA: SCOPE không có key "target_sample_rate_khz" (chỉ có
+        # "sampling_rate_hz"), nên .get(...) trước đây LUÔN rơi về fallback
+        # hardcode "12", không thực sự đọc từ SCOPE — vô hại về số (khớp
+        # đúng 12 hiện tại) nhưng sẽ âm thầm sai nếu SCOPE["sampling_rate_hz"]
+        # từng đổi. Tính trực tiếp từ SCOPE để bám theo cấu hình thật.
+        target_rate = cfg.SCOPE["sampling_rate_hz"] / 1000
 
         # pd.notna() thay vì "is not None" — ĐÂY chính là chỗ gây ra bug
         # Normal bị loại nhầm khỏi manifest ở 2 lượt trước: declared_rate
@@ -348,6 +446,7 @@ def run_sanity_checks(df: pd.DataFrame) -> pd.DataFrame:
 
     df["warnings"] = ["; ".join(w) if w else "" for w in warnings_list]
     df["has_warning"] = df["warnings"] != ""
+    df["resolved_sample_rate_hz"] = resolved_fs_list
     return df
 
 
