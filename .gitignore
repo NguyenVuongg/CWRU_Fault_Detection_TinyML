@@ -2,6 +2,8 @@
 /data_raw_git_backup/
 .gitignore.bak
 __pycache__/
+**/outputs/tables/*.csv
+**/outputs/models/
 *.py[cod]
 .vscode/
 .venv/

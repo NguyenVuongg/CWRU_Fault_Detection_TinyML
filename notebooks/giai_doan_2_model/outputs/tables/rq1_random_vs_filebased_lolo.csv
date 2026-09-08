@@ -1,3 +1,0 @@
-method,accuracy_mean,accuracy_std,f1_mean,f1_std,delta_accuracy_vs_lolo
-File-based Split + LOLO,1.0,0.0,1.0,0.0,0.0
-Random Window Split,1.0,0.0,1.0,0.0,0.0

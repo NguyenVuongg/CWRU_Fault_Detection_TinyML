@@ -412,7 +412,10 @@ def run_sanity_checks(df: pd.DataFrame) -> pd.DataFrame:
         #     hiệu ứng phụ của check khác — file Fan-End đúng RPM và đúng
         #     vị trí OR có thể lọt qua với 0 cảnh báo nếu thiếu check này)
         sensor_location = row.get("sensor_location")
-        target_sensor = cfg.SCOPE.get("sensor_location", "DE")
+        # KHÔNG dùng .get(..., "DE"): fallback im lặng biến một khóa
+        # cấu hình sai thành "check luôn đúng". Index trực tiếp để
+        # KeyError nổ ngay khi tên khóa lệch với config.SCOPE.
+        target_sensor = cfg.SCOPE["sensor_location"]
         # pd.notna() thay vì "is not None" — cùng lý do đã sửa ở check 1/7:
         # cột pandas có thể trả NaN cho các dòng vốn là None khi bị ép kiểu
         # chung với dòng khác (chưa từng biểu hiện lỗi vì Normal luôn gán

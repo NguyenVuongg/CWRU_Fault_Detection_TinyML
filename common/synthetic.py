@@ -4,6 +4,7 @@ common/synthetic.py
 =====================
 """
 
+import hashlib
 import shutil
 from pathlib import Path
 
@@ -12,6 +13,23 @@ from scipy.io import savemat
 from scipy.signal import lfilter
 
 from . import config as cfg
+
+
+def stable_seed(text, modulo: int = 2 ** 31 - 1) -> int:
+    """Seed ỔN ĐỊNH GIỮA CÁC PHIÊN sinh từ một chuỗi.
+
+    hash() của Python bị salt ngẫu nhiên theo từng tiến trình (xem
+    PYTHONHASHSEED), nên hash(fname) % 1000 tạo ra dữ liệu giả KHÁC
+    NHAU mỗi lần chạy: một ca kiểm thử vừa thất bại sẽ không tái lập
+    được, và bug của run_sanity_checks() có thể biến mất khi chạy lại.
+    md5 cho cùng một giá trị mãi mãi trên mọi máy, mọi phiên bản.
+
+    Dải rộng 2^31-1 thay vì 1000 để giảm nguy cơ hai tên file khác
+    nhau nhận cùng seed (sinh ra hai file trùng khít nội dung, làm
+    thí nghiệm tự kiểm chứng mất hiệu lực).
+    """
+    digest = hashlib.md5(str(text).encode("utf-8")).hexdigest()
+    return int(digest, 16) % modulo
 
 
 def make_synthetic_signal(fs, duration_sec, rpm, fault_freq_hz=None,
@@ -114,7 +132,7 @@ def build_edge_case_dataset(root: Path):
     def save(rel_dir: str, fname: str, fs: float, rpm: float, category: str = _TOP_FOLDER):
         d = root / category / rel_dir
         d.mkdir(parents=True, exist_ok=True)
-        _, x = make_synthetic_signal(fs, 10.0, rpm, seed=hash(fname) % 1000)
+        _, x = make_synthetic_signal(fs, 10.0, rpm, seed=stable_seed(fname))
         savemat(str(d / f"{fname}.mat"), {"X999_DE_time": x.reshape(-1, 1),
                                            "X999RPM": np.array([[rpm]])})
 

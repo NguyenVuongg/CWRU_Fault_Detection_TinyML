@@ -23,12 +23,12 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import accuracy_score, f1_score
 
-from .splitting import generate_lolo_folds, file_based_split
+from .splitting import file_based_split, generate_lolo_folds, resolve_label_col
 
 
 def iterate_lolo_splits(feature_df: pd.DataFrame, load_col: str = "load_hp",
                          val_ratio: float = 0.2, seed: int = 42,
-                         loads=(0, 1, 2, 3)):
+                         loads=(0, 1, 2, 3), stratify_col=None):
     """
     Generator: với mỗi fold LOLO, yield (fold_info, train_df, val_df, test_df).
 
@@ -49,7 +49,10 @@ def iterate_lolo_splits(feature_df: pd.DataFrame, load_col: str = "load_hp",
         test_df = feature_df[feature_df[load_col] == test_load].reset_index(drop=True)
         trainval_df = feature_df[feature_df[load_col].isin(trainval_loads)].reset_index(drop=True)
 
-        train_df, val_df = file_based_split(trainval_df, test_ratio=val_ratio, seed=seed)
+        # stratify_col=None -> file_based_split tự lấy cột nhãn 10 lớp
+        # ("class_label"), đúng "Stratified File-based Split 80/20" của mục 2.1.
+        train_df, val_df = file_based_split(trainval_df, test_ratio=val_ratio,
+                                            seed=seed, stratify_col=stratify_col)
 
         fold_info = {
             "fold_name": f"test_load_{test_load}",
@@ -61,7 +64,7 @@ def iterate_lolo_splits(feature_df: pd.DataFrame, load_col: str = "load_hp",
 
 
 def run_lolo_evaluation(feature_df: pd.DataFrame, feature_cols, estimator_factory,
-                         label_col: str = "label", load_col: str = "load_hp",
+                         label_col=None, load_col: str = "load_hp",
                          val_ratio: float = 0.2, seed: int = 42, loads=(0, 1, 2, 3),
                          use_val_for_fit: bool = False):
     """
@@ -76,10 +79,19 @@ def run_lolo_evaluation(feature_df: pd.DataFrame, feature_cols, estimator_factor
     trước khi gọi run_lolo_evaluation với estimator_factory đã cố định
     hyperparameter tốt nhất) — đúng quy trình mục 2.1: "lựa chọn siêu
     tham số dựa trên tập Validation, đánh giá trên tập Test".
+
+    label_col=None (mặc định) -> dùng cột "class_label" của sơ đồ 10 LỚP,
+    đúng bài toán chính đã chốt ở mục 1.1. Truyền label_col="label" khi muốn
+    chạy phân tích bổ trợ 4 lớp để đối chiếu.
     """
+    # label_col=None -> "class_label" (10 lớp, mục 1.1). Cột nhãn được dùng
+    # luôn làm cột stratify của bước chia Train/Val bên trong mỗi fold.
+    label_col = resolve_label_col(feature_df, label_col)
+
     rows = []
     for fold_info, train_df, val_df, test_df in iterate_lolo_splits(
         feature_df, load_col=load_col, val_ratio=val_ratio, seed=seed, loads=loads,
+        stratify_col=label_col,
     ):
         fit_df = pd.concat([train_df, val_df], ignore_index=True) if use_val_for_fit else train_df
 
