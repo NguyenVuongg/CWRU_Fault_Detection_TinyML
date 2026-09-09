@@ -1,0 +1,21 @@
+{
+  "fs_raw_hz": 12000,
+  "window_size_raw": 2048,
+  "stride_raw": 1024,
+  "fs_env_hz": 6000.0,
+  "env_decim": 2,
+  "window_size_env": 1024,
+  "stride_env": 512,
+  "window_duration_ms": 170.667,
+  "warmup_samples": 2048,
+  "band_hz": [
+    2300,
+    3800
+  ],
+  "lp_cutoff_hz": 750.0,
+  "env_methods": {
+    "squarelaw": "square_law",
+    "hilbert": "hilbert_fir",
+    "hybrid": "hybrid"
+  }
+}

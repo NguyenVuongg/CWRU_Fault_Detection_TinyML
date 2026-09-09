@@ -7,3 +7,7 @@ __pycache__/
 *.py[cod]
 .vscode/
 .venv/
+
+# Giai đoạn 2-3 tạm thời giữ local, chưa đưa lên repository.
+/notebooks/giai_doan_2_model/
+/notebooks/giai_doan_3_dsp/

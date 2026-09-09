@@ -3,5 +3,23 @@
     2300,
     3800
   ],
-  "lp_cutoff_hz": 500
+  "lp_cutoff_hz": 750.0,
+  "fs_hz": 12000,
+  "f_c_hz": 3050.0,
+  "bandpass_order": 4,
+  "lowpass_order": 2,
+  "hybrid_amplitude_tilt": {
+    "2300": 0.9339,
+    "3050": 1.0,
+    "3800": 0.9139
+  },
+  "window_size_raw": 2048,
+  "stride_raw": 1024,
+  "env_decim": 2,
+  "window_size_env": 1024,
+  "stride_env": 512,
+  "fs_env_hz": 6000.0,
+  "warmup_samples": 2048,
+  "freq_resolution_hz": 5.8594,
+  "lowpass_gain_at_bpfi_h3_db": -0.71
 }
