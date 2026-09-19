@@ -68,7 +68,7 @@ def amplitude_near_frequencies(freqs, mag, target_freqs_hz, search_width_hz=3.0)
 
 
 def amplitude_near_frequency(freqs, mag, target_freq_hz, search_width_hz=3.0):
-    """Trường hợp 1 tần số của amplitude_near_frequencies() — giữ cho code cũ."""
+    """Trường hợp một tần số của amplitude_near_frequencies()."""
     return amplitude_near_frequencies(freqs, mag, [target_freq_hz], search_width_hz)
 
 
@@ -127,7 +127,7 @@ def plan_harmonic_groups(freq_resolution_hz,
 
 
 def _group_key(prefix, group, decl_index):
-    """Nhóm 1 phần tử -> tên cũ ('order_BPFO_h1'). Nhóm gộp -> nối bằng
+    """Nhóm một phần tử dùng tên 'order_BPFO_h1'. Nhóm gộp nối bằng
     '_and_' theo thứ tự KHAI BÁO của target_names ('order_BPFO_h2_and_BSF_h3').
     """
     labels = [f"{n}_h{h}"
@@ -145,22 +145,16 @@ def extract_order_features(freqs, mag, rpm, target_names=("f_rot", "BPFO", "BPFI
     tiêu. Tiền tố "order_"/"envelope_" giúp lọc theo nhóm khi phân tích
     Feature Importance ở mục 2.2.
 
-    ĐÃ SỬA search_width_hz: 2.0 -> 3.0 để khớp features_full (cả
-    extract_order_domain_features lẫn extract_envelope_features_from_envelope
-    đều mặc định 3.0). Ở cửa sổ 2048 @12kHz hai giá trị này TRÙNG kết quả vì
-    đều bị sàn an toàn kéo lên 3.0762 Hz (= 0.5*1.05*độ phân giải 5.8594 Hz),
-    nên số liệu hiện có KHÔNG đổi. Nhưng ở cửa sổ 8192 mà chính docstring đầu
-    file đề xuất (độ phân giải 1.4648 Hz, sàn chỉ 0.7690 Hz) thì 2.0 và 3.0
-    cho ra HAI bề rộng tìm kiếm khác nhau -> Nhóm B và Nhóm C được trích bằng
-    hai quy tắc khác nhau trong cùng một vector đặc trưng. Chốt về một số.
+    search_width_hz mặc định là 3.0 để khớp features_full và giữ cùng quy
+    tắc tìm kiếm cho Nhóm B và Nhóm C ở mọi kích thước cửa sổ.
 
     Khóa: "order_BPFO_h1", ... Các cặp KHÔNG phân giải được ở độ phân giải
     của `freqs` được gộp thành một khóa, ví dụ "order_BPFO_h2_and_BSF_h3"
     (lý do: xem docstring đầu file). Số chiều vì thế là 10 (Nhóm B) và 7
     (Nhóm C) thay vì 12 và 9.
 
-    merge_unresolvable=False trả lại đúng hành vi cũ (mỗi hài một cột, có cột
-    trùng nhau theo tải) — chỉ dùng khi cần tái lập kết quả cũ.
+    merge_unresolvable=False giữ riêng từng harmonic; tùy chọn này chỉ dùng
+    cho các phân tích cần giữ đầy đủ cột harmonic.
 
     Tên không có trong bearing_fault_frequencies() làm hàm raise KeyError
     ngay, không âm thầm bỏ qua.

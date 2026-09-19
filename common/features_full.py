@@ -120,24 +120,17 @@ def extract_envelope_features(x, fs, rpm, band_hz,
     đã có sẵn (đường chính thức build_full_feature_table()), dùng thẳng
     extract_envelope_features_from_envelope() thay vì hàm này.
 
-    ĐÃ SỬA: trước đây hàm này gọi CỐ ĐỊNH dsp.square_law_envelope(), không
-    có cách nào chọn phương pháp khác dù tên tham số bandpass_order/
-    lowpass_order gợi ý có thể cấu hình - đây là bẫy cho bất kỳ ai gọi hàm
-    này trực tiếp để thử Hybrid/Hilbert-FIR. Nay đi qua
-    dsp.envelope_by_method() - dispatcher DUY NHẤT - như mọi nơi khác
-    trong codebase.
+    Hàm sử dụng dsp.envelope_by_method() để mọi phương pháp dùng chung
+    cấu hình lọc benchmark.
 
-    method: 'square_law' (mặc định, GIỮ NGUYÊN hành vi cũ) | 'hilbert_fir'
+    method: 'square_law' (mặc định) | 'hilbert_fir'
         | 'hybrid'. Xem dsp.envelope_by_method() để biết các lựa chọn.
     envelope_kwargs: dict tham số bổ sung chuyển tiếp cho
         dsp.envelope_by_method(), vd {"take_sqrt": True} khi
         method="square_law" để đồng nhất đơn vị với hilbert_fir/hybrid
         (xem docstring build_full_feature_table về envelope_kwargs).
 
-    bandpass_order/lowpass_order: ĐÃ ĐỔI default từ literal 4/2 sang
-    dsp.BENCHMARK_BANDPASS_ORDER/dsp.BENCHMARK_LOWPASS_ORDER - cùng giá
-    trị số nên KHÔNG đổi hành vi, chỉ tránh 2 số hardcode rời khỏi nguồn
-    chân lý duy nhất ở dsp.py.
+    bandpass_order/lowpass_order dùng các hằng số benchmark trong dsp.py.
     """
     envelope = dsp.envelope_by_method(
         x, fs, band=band_hz, method=method, lp_cutoff=lp_cutoff_hz,
@@ -180,10 +173,7 @@ def extract_full_feature_vector(x, fs, rpm, band_hz, envelope_window=None,
         envelope_method, envelope_kwargs: CHỈ có tác dụng khi
             envelope_window=None (nhánh tự tính envelope). Forward xuống
             extract_envelope_features() -> dsp.envelope_by_method(). Mặc
-            định "square_law" GIỮ NGUYÊN hành vi cũ.
-            ĐÃ SỬA: trước đây 2 tham số này không tồn tại, nhánh tự tính
-            LUÔN LUÔN ra Square-Law bất kể ý định gọi hàm là gì - xem
-            docstring extract_envelope_features().
+            định "square_law".
 
     Số chiều mặc định = 11 (Nhóm A) + 10 (Nhóm B) + 7 (Nhóm C) = 28.
     Nhóm B là 10 chứ không phải 4x3=12, Nhóm C là 7 chứ không phải 3x3=9: ở
@@ -231,17 +221,15 @@ def build_full_feature_table(manifest_df, band_hz, load_de_signal_fn=None,
 
     Args:
         load_de_signal_fn: callable(file_path, source_fs_hz, target_fs_hz)
-            -> np.ndarray. MẶC ĐỊNH dùng io_utils.load_de_signal_resampled
-            (đọc tín hiệu DE + resample về target_fs_hz). CHỮ KÝ ĐÃ ĐỔI so
-            với bản trước (trước đây chỉ nhận `file_path`) - nếu bạn có
-            hàm đọc tùy chỉnh, cập nhật chữ ký cho khớp.
+            -> np.ndarray. Mặc định dùng io_utils.load_de_signal_resampled
+            để đọc tín hiệu DE và resample về target_fs_hz.
         target_fs_hz: tần số lấy mẫu CHUNG mà mọi file sẽ được resample về
             trước khi trích đặc trưng. Mặc định lấy từ
             config.SCOPE["sampling_rate_hz"] (12000Hz). ĐẢM BẢO band_hz,
             lp_cutoff_hz, window_size đều được thiết kế cho đúng tần số
             này.
 
-        envelope_method: "square_law" (mặc định, giữ nguyên hành vi cũ),
+        envelope_method: "square_law" (mặc định),
             "hilbert_fir" hoặc "hybrid". Đi qua dsp.envelope_by_method() để
             CẢ 3 phương pháp dùng chung một cấu hình lọc nhân quả (bậc
             bandpass/lowpass, lp_cutoff, cách khử DC) — điều kiện bắt buộc
@@ -274,14 +262,9 @@ def build_full_feature_table(manifest_df, band_hz, load_de_signal_fn=None,
       - window_idx : chỉ số cửa sổ trong file (0..n-1).
       - start_idx  : vị trí mẫu bắt đầu của cửa sổ (để truy vết).
 
-    LỖI RÒ RỈ DỮ LIỆU ĐÃ SỬA: bản cũ ghi
-        file_id = f"{Path(file_path).name}_win_{i}"
-    khiến MỖI CỮA SỔ thành một "file" riêng biệt. file_based_split() chia
-    theo file_id nên các cửa sổ CHỒNG LẤN của cùng 1 file bị rải cả vào
-    train và test -> File-based Split thoái hóa thành Random Window Split.
-    Hệ quả: RQ1/H1 bị vô hiệu, và vì cả hai nhánh thí nghiệm đều rò rỉ
-    như nhau, kết quả gần nhau sẽ dẫn tới kết luận NGƯỢC rằng "không có
-    rò rỉ dữ liệu" — tức dùng chính thí nghiệm bị rò rỉ để phủ nhận rò rỉ.
+    file_id luôn là định danh file gốc, không chứa chỉ số cửa sổ. Đây là
+    điều kiện bắt buộc để cửa sổ của cùng một file không xuất hiện đồng thời
+    ở train và test.
     """
     import pandas as pd
     from pathlib import Path
@@ -292,15 +275,14 @@ def build_full_feature_table(manifest_df, band_hz, load_de_signal_fn=None,
 
     target_fs_hz = float(target_fs_hz or SCOPE.get("sampling_rate_hz", 12000))
     # Số mẫu đầu tín hiệu bị loại (quá độ khởi động + xác lập lọc IIR nhân
-    # quả). Truyền 0 để giữ nguyên hành vi cũ.
+    # quả). Truyền 0 để không loại vùng warmup.
     warmup_samples = WARMUP_SAMPLES if warmup_samples is None else int(warmup_samples)
 
     if "resolved_sample_rate_hz" not in manifest_df.columns:
         raise ValueError(
             "manifest_df thiếu cột 'resolved_sample_rate_hz' - manifest này "
             "chưa qua io_utils.run_sanity_checks(). KHÔNG được đoán fs mặc "
-            "định (đây chính là bug đã sửa: trước đây fallback im lặng về "
-            "12000Hz kể cả cho file Normal baseline thực chất 48kHz)."
+            "định; không được suy đoán sampling rate cho file chưa xác định."
         )
 
     rows = []
@@ -320,9 +302,7 @@ def build_full_feature_table(manifest_df, band_hz, load_de_signal_fn=None,
         # từ file (cột rpm_from_file do io_utils.inspect_mat_file() trích từ
         # trường ...RPM của .mat), vì RPM thực tế của từng file lệch danh
         # định vài RPM, còn amplitude_near_frequency() chỉ bù được trong cửa
-        # sổ ±search_width_hz quanh tần số mục tiêu. Trước đây hàm này chỉ
-        # dùng RPM DANH ĐỊNH theo tải và bỏ phí cột rpm_from_file đã có sẵn
-        # trong manifest.
+        # sổ ±search_width_hz quanh tần số mục tiêu.
         #
         # Nếu rpm_from_file lệch danh định quá 20 RPM (cùng ngưỡng với check
         # RPM_LECH của io_utils.run_sanity_checks) thì không rõ giá trị nào

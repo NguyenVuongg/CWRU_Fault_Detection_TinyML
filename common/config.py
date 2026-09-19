@@ -77,13 +77,10 @@ def hz_to_order(freq_hz, rpm: float):
 # ---------------------------------------------------------------------------
 # Phạm vi dữ liệu đã chốt (mục 0.1)
 # ---------------------------------------------------------------------------
-# LƯU Ý VỀ TÊN KHÓA: khóa này PHẢI trùng tên cột "sensor_location" do
+# LƯU Ý VỀ TÊN KHÓA: khóa này phải trùng tên cột "sensor_location" do
 # io_utils.build_manifest() sinh ra, vì run_sanity_checks() so sánh
-# trực tiếp hai bên. Bản cũ khai báo "sensor_position" trong khi
-# io_utils đọc cfg.SCOPE.get("sensor_location", "DE") — KeyError bị
-# .get() che đi nên check #6 luôn âm thầm chạy bằng fallback "DE":
-# đúng số một cách tình cờ hôm nay, nhưng nếu đổi phạm vi sang "FE"
-# thì config đổi mà check vẫn lọc theo "DE" và không báo gì cả.
+# trực tiếp hai bên. Các khóa trong SCOPE được kiểm tra tường minh khi
+# import để tránh cấu hình sai bị che bởi giá trị mặc định.
 # Tách hai danh sách này ra hằng số CÓ KIỂU RÕ RÀNG. Lý do không thuần
 # thẩm mỹ: SCOPE là dict trộn nhiều loại giá trị (str, int, list), nên
 # trình kiểm kiểu suy ra SCOPE["labels"] có kiểu hợp
@@ -177,12 +174,7 @@ def make_class_label(
             f"label='{label}' không thuộc phạm vi đã chốt {SCOPE_LABELS}."
         )
 
-    # Chặn None TƯỜNG MINH trước khi gọi float(). Bản cũ dựa vào việc
-    # float(None) ném TypeError rồi bắt lại — chạy đúng, nhưng trình kiểm
-    # kiểu báo lỗi vì None không thỏa ConvertibleToFloat, và nó báo ĐÚNG:
-    # dùng exception để xử lý một ca đã biết chắc là None thì vừa chậm hơn
-    # vừa che mất ý định. Sau phép kiểm tra này kiểu được thu hẹp còn
-    # SupportsFloat | SupportsIndex | str, đều hợp lệ với float().
+    # Chặn None tường minh trước khi chuyển sang float().
     if fault_diameter_mils is None:
         raise ValueError(
             f"label='{label}' là nhãn lỗi nên BẮT BUỘC có fault_diameter_mils, "
@@ -225,11 +217,8 @@ DURATION_TOLERANCE_SEC = 3.0
 # ---------------------------------------------------------------------------
 # Envelope + cửa sổ — NGUỒN DUY NHẤT cho notebook 03/04/05/06 và Giai đoạn 2
 # ---------------------------------------------------------------------------
-# Dải cộng hưởng đã CHỐT cho toàn bộ RQ2 (mục 1.2). Trước đây con số này
-# nằm rải rác trong docstring của dsp.py (2300-3800 Hz) và
-# features_dynamic.py (2300-3800 Hz) mà không khớp đề cương, nên mỗi
-# notebook truyền một dải khác nhau là so sánh 3 phương pháp envelope trên
-# 3 dải khác nhau -> RQ2 mất hiệu lực. Từ đây mọi nơi lấy MỘT nguồn này.
+# Dải cộng hưởng dùng chung cho toàn bộ RQ2 (mục 1.2). Mọi module và
+# notebook phải lấy dải này làm nguồn cấu hình duy nhất.
 #
 # fc là tần số dùng để chuẩn hóa hệ số của hybrid envelope (dsp.hybrid_envelope):
 # đặt fc = trung điểm dải để sai lệch biên độ |Q/I| đối xứng ở hai biên
@@ -272,9 +261,8 @@ RESONANCE_FC_HZ = (RESONANCE_BAND_HZ[0] + RESONANCE_BAND_HZ[1]) / 2.0
 # từng notebook, vì đó là cách các con số bắt đầu lệch nhau.
 LP_CUTOFF_HZ = 750.0
 
-# Hai hằng số dưới CHỈ để tái lập/đối chiếu, KHÔNG phải nguồn chân lý:
-#   NARROW = ngưỡng cũ, giữ lại để chạy lại đúng số liệu trước khi đổi.
-#   WIDE   = alias của giá trị đang dùng (giữ tên cũ cho code cũ khỏi vỡ).
+# Hai hằng số dưới là các tên cấu hình phụ để tái lập/đối chiếu:
+# NARROW là ngưỡng 500 Hz, WIDE là alias của ngưỡng đang dùng.
 LP_CUTOFF_HZ_NARROW = 500.0
 LP_CUTOFF_HZ_WIDE = LP_CUTOFF_HZ
 

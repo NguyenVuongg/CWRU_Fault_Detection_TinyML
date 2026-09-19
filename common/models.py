@@ -17,35 +17,61 @@ from tensorflow.keras import Model, Sequential, Input, layers, optimizers, regul
 
 from .config import CLASSES_4, CLASSES_10, WINDOW_SIZE_ENV, WINDOW_SIZE_RAW
 
-# Số lớp mặc định của MỌI kiến trúc trong file này — lấy từ config để không
-# có chỗ nào hard-code "4" hay "10" nữa. Bản cũ để n_classes=4 ở cả 3 hàm
-# build_*, nên nếu quên truyền tham số thì model chỉ có 4 nơ-ron output và
-# nhãn 4..9 của sơ đồ 10 lớp sẽ nổ lỗi (hoặc bị cắt âm thầm) ở lúc fit.
+# Số lớp mặc định của mọi kiến trúc lấy từ config để tránh hard-code.
 N_CLASSES_DEFAULT = len(CLASSES_10)
 N_CLASSES_4 = len(CLASSES_4)
 
-
-def build_mlp(input_dim: int, n_classes: int = N_CLASSES_DEFAULT,
-              name: str = "mlp_lightweight") -> Model:
+def build_mlp(
+    input_dim: int,
+    n_classes: int = N_CLASSES_DEFAULT,
+    hidden_units: tuple = (24, 12),
+    dropout_rate: float = 0.2,
+    l2_reg: float = 1e-4,
+    norm_mean=None,
+    norm_variance=None,
+    name: str = "mlp_lightweight",
+) -> Model:
     """
-    MLP siêu gọn — ĐÚNG kiến trúc mục 2.2 (32 -> 16 -> n_classes).
+    MLP siêu gọn cho bảng đặc trưng thủ công.
 
     input_dim: số chiều đặc trưng THỰC TẾ của bảng đặc trưng, KHÔNG phải
-    hằng số 32 viết cứng. Sau khi gộp các cột hài rơi trùng bin FFT, bể đặc
-    trưng ra 28 chiều thay vì 32 — xem features_full.EXPECTED_FEATURE_COUNTS
-    và lấy số này bằng len(feature_cols).
+    hằng số viết cứng. Sau khi gộp các cột hài rơi trùng bin FFT, bể đặc
+    trưng ra 28 chiều — xem features_full.EXPECTED_FEATURE_COUNTS và lấy
+    số này bằng len(feature_cols).
     """
-    model = Sequential([
-        Input(shape=(input_dim,), name="features"),
-        layers.Dense(32, activation="relu", name="dense_32",
-             kernel_regularizer=regularizers.l2(1e-4)),
-        layers.Dropout(0.2, name="dropout_1"), # Tắt ngẫu nhiên 20% nơ-ron
-        layers.Dense(16, activation="relu", name="dense_16"),
-        layers.Dropout(0.2, name="dropout_2"),
-        layers.Dense(n_classes, activation="softmax", name="output"),
-    ], name=name)
-    return model
+    import warnings
+    import numpy as np
 
+    inputs = Input(shape=(input_dim,), name="features")
+
+    if norm_mean is not None and norm_variance is not None:
+        # Ép kiểu tường minh về float32 và làm phẳng về 1D (shape: (input_dim,))
+        safe_mean = np.array(norm_mean, dtype=np.float32).reshape(-1)
+        safe_var = np.array(norm_variance, dtype=np.float32).reshape(-1)
+
+        x = layers.Normalization(
+            mean=safe_mean, variance=safe_var, name="feature_norm"
+        )(inputs)
+    else:
+        warnings.warn(
+            "build_mlp() không nhận norm_mean/norm_variance — model nhận "
+            "thẳng đặc trưng CHƯA chuẩn hóa. Nếu bạn tự StandardScaler bên "
+            "ngoài model thì đây là chủ ý, bỏ qua cảnh báo. Nếu không, "
+            "thang đo lệch nhau giữa nhóm Time/Order/Envelope sẽ làm huấn "
+            "luyện không ổn định.",
+            stacklevel=2,
+        )
+        x = inputs
+
+    for i, units in enumerate(hidden_units):
+        x = layers.Dense(
+            units, activation="relu", name=f"dense_{units}_{i}",
+            kernel_regularizer=regularizers.l2(l2_reg),
+        )(x)
+        x = layers.Dropout(dropout_rate, name=f"dropout_{i}")(x)
+
+    outputs = layers.Dense(n_classes, activation="softmax", name="output")(x)
+    return Model(inputs, outputs, name=name)
 
 # ============================================================================
 # CNN 1D — hai nhánh của RQ4 (raw signal vs envelope)
@@ -54,16 +80,8 @@ def build_mlp(input_dim: int, n_classes: int = N_CLASSES_DEFAULT,
 # biến duy nhất còn lại là DẠNG ĐẦU VÀO (raw 2048 mẫu @12kHz vs envelope
 # 1024 mẫu @6kHz, cùng phủ 170.67 ms).
 #
-# Bản cũ vi phạm điều này ở mức không cứu được: nhánh raw dùng kernel 64 /
-# stride 2 / pool 4 / KHÔNG BatchNorm, nhánh envelope dùng kernel 32 /
-# stride 1 / pool 2 / CÓ 2 lớp BatchNorm. Hai kiến trúc khác nhau hoàn toàn,
-# nên nếu nhánh envelope thắng thì không thể biết là do envelope tốt hơn hay
-# do BatchNorm + không mất mẫu vì stride — đúng thứ confound làm RQ4/H4 vô
-# giá trị.
-#
-# Chốt lấy cấu hình của nhánh envelope (stride 1, có BatchNorm) làm cấu hình
-# CHUNG, vì stride 2 trên tín hiệu thô làm mất mẫu ở tần số cộng hưởng
-# 2-4 kHz vốn là chỗ chứa thông tin lỗi.
+# Hai nhánh dùng cùng cấu hình Conv/Pooling/BatchNorm. Stride 1 giữ lại
+# thông tin ở dải cộng hưởng 2-4 kHz.
 CNN_BLOCK_CONFIG = {
     "conv1_filters": 8,
     "conv1_kernel": 32,

@@ -10,24 +10,7 @@ GIAO THỨC SO SÁNH CÔNG BẰNG (đọc trước khi chạy bất kỳ thực 
 Toàn bộ đường ống được đưa vào bảng benchmark phải NHÂN QUẢ (causal), vì
 mục tiêu của đề tài là chi phí/hiệu năng TRÊN MCU chạy realtime.
 
-Cấu hình CŨ (đã sửa) so sánh khập khiễng:
-  - hilbert_envelope() lọc bằng filtfilt (zero-phase, phi nhân quả) VÀ dùng
-    scipy.signal.hilbert() (biến đổi theo KHỐI dựa trên FFT).
-  - square_law_envelope() / hybrid_envelope() lọc bằng lfilter/sosfilt
-    (nhân quả, có trễ pha thật).
-
-=> Baseline Hilbert được lợi BA lần, không chỉ về pha:
-     (1) filtfilt không trễ pha — điều KHÔNG tồn tại trên MCU realtime;
-     (2) filtfilt lọc 2 lượt nên đáp ứng biên độ là |H|^2: Butterworth
-         order=4 trở thành order=8 HIỆU DỤNG -> dải chặn sắc hơn hẳn, tức
-         baseline được lợi cả về ĐỘ CHỌN LỌC chứ không chỉ pha;
-     (3) scipy.signal.hilbert() cần toàn bộ khối tín hiệu (FFT N điểm), nên
-         không phải một bộ lọc chạy theo từng mẫu và không phản ánh chi phí
-         thật trên MCU.
-   Mọi kết luận kiểu "Hybrid/Square-Law nhiễu hơn Hilbert" rút ra từ cấu
-   hình cũ đều KHÔNG có giá trị so sánh.
-
-QUY ƯỚC MỚI:
+QUY ƯỚC BENCHMARK:
   - Mặc định mọi bộ lọc trong module này là NHÂN QUẢ (sosfilt/lfilter).
     zero_phase=True chỉ dành cho minh họa/vẽ phổ offline.
   - Baseline Hilbert dùng cho benchmark là hilbert_envelope_fir(): FIR
@@ -62,9 +45,8 @@ BENCHMARK_BAND_HZ = tuple(float(v) for v in RESONANCE_BAND_HZ)  # config.RESONAN
 # ---------------------------------------------------------------------------
 # Xấp xỉ |I + jQ| ~= alpha*max(|I|,|Q|) + beta*min(|I|,|Q|), tránh sqrt.
 #
-# CÓ HAI cặp hệ số "chuẩn" và chúng tối ưu HAI tiêu chí KHÁC NHAU — bản cũ
-# dùng cặp MSE nhưng docstring lại hứa "sai số biên độ < ~4%", là con số
-# của cặp minmax. Đo lại bằng số trên toàn cung |I|>=|Q|:
+# Có hai cặp hệ số chuẩn, tối ưu cho hai tiêu chí khác nhau. Đo trên toàn
+# cung |I|>=|Q| cho các sai số sau:
 #
 #     cặp (0.947,     0.392)      -> sai số max 5.32% , trung bình 1.99%
 #     cặp (0.9475436, 0.3924856)  -> sai số max 5.25% , trung bình 2.00%
@@ -79,7 +61,7 @@ BENCHMARK_BAND_HZ = tuple(float(v) for v in RESONANCE_BAND_HZ)  # config.RESONAN
 ALPHA_MAX_MINMAX = 0.960433870103   # tối ưu sai số TỐI ĐA (mặc định)
 BETA_MIN_MINMAX = 0.397824734759
 ALPHA_MAX_MSE = 0.947543636291      # tối ưu sai số TRUNG BÌNH BÌNH PHƯƠNG
-BETA_MIN_MSE = 0.392485603          # (để lại để tái lập số liệu bản cũ)
+BETA_MIN_MSE = 0.392485603          # hệ số tối ưu theo tiêu chí MSE
 
 
 def _resolve_band(band):
@@ -106,7 +88,7 @@ def _resolve_band(band):
 #
 # Đây là ƯỚC LƯỢNG PHÂN TÍCH để định hướng, KHÔNG thay thế số đo thật
 # bằng DWT->CYCCNT ở Giai đoạn 3 (xem mcu_export.latency_from_dwt_cycles).
-# CẢNH BÁO ĐẾM BIQUAD (ĐÃ SỬA — bản cũ đếm THIẾU ĐÚNG 2 LẦN ở nhánh bandpass):
+# Cách đếm biquad cho chi phí benchmark:
 # butter(N, [f1, f2], btype="bandpass") KHÔNG cho bộ lọc bậc N. N là bậc của
 # NGUYÊN MẪU lowpass; phép biến đổi lowpass -> bandpass nhân đôi số cực, nên
 # bậc thực tế là 2N. Kiểm chứng bằng số:
@@ -114,8 +96,8 @@ def _resolve_band(band):
 #     butter(2, 750,          btype="lowpass",  output="sos").shape == (1, 6)
 # Mỗi biquad dạng transposed direct-form II (a0 chuẩn hóa = 1) tốn 5 nhân +
 # 4 cộng/mẫu, nên:
-#     bandpass bậc 4 -> 4 biquad -> 20 nhân + 16 cộng/mẫu   (bản cũ: 2/10/8)
-#     lowpass  bậc 2 -> 1 biquad ->  5 nhân +  4 cộng/mẫu   (bản cũ ĐÚNG)
+#     bandpass bậc 4 -> 4 biquad -> 20 nhân + 16 cộng/mẫu
+#     lowpass  bậc 2 -> 1 biquad ->  5 nhân +  4 cộng/mẫu
 # Sai số này KHÔNG đổi thứ hạng RQ2 (khối chung triệt tiêu khi so sánh), nhưng
 # nó làm HỎNG con số TUYỆT ĐỐI ở mục 3.1 — đúng con số sẽ đem đối chiếu với
 # đo thật bằng DWT->CYCCNT. Chiều sai lại có lợi cho đề tài (khai thấp khối
@@ -208,8 +190,8 @@ def bandpass_filter(x, fs, low_hz, high_hz, order=BENCHMARK_BANDPASS_ORDER,
         phân tích/vẽ hình offline. TUYỆT ĐỐI KHÔNG dùng trong bảng so sánh
         RQ2/RQ3 (xem lý do ở docstring đầu module).
 
-    Đã bỏ chuỗi ký tự lơ lửng giữa thân hàm ở bản cũ — nó nằm SAU câu lệnh
-    nên không phải docstring, chỉ là một biểu thức string bị bỏ đi.
+    Hàm trả về bộ lọc nhân quả mặc định; zero_phase chỉ dành cho phân tích
+    offline.
     """
     nyq = fs / 2.0
     wn = [low_hz / nyq, high_hz / nyq]
@@ -224,12 +206,7 @@ def lowpass_filter(x, fs, cutoff_hz, order=BENCHMARK_LOWPASS_ORDER,
                    zero_phase=False):
     """Butterworth lowpass. Xem ghi chú zero_phase ở bandpass_filter()."""
     nyq = fs / 2.0
-    # ĐÃ SỬA: bản cũ np.clip(..., 1e-4, 0.99) ÂM THẦM kẹp tần số cắt. Nếu gọi
-    # lowpass_filter trên tín hiệu ĐÃ giảm mẫu (vd fs=1500 -> nyq=750) với
-    # lp_cutoff=750 thì wn=1.0 bị kẹp về 0.99: bộ lọc gần như thông suốt,
-    # không lỗi, không cảnh báo, đường bao ra sai hoàn toàn. Sau khi nâng
-    # LP_CUTOFF_HZ 500 -> 750, biên an toàn đó hẹp đi, nên chuyển thành lỗi
-    # tường minh thay vì kẹp im.
+    # Từ chối cutoff không hợp lệ để tránh tạo bộ lọc gần như thông suốt.
     if not np.isfinite(cutoff_hz) or cutoff_hz <= 0.0:
         raise ValueError(
             f"lowpass_filter: cutoff_hz phải là số dương hữu hạn, nhận {cutoff_hz!r}."
@@ -237,8 +214,7 @@ def lowpass_filter(x, fs, cutoff_hz, order=BENCHMARK_LOWPASS_ORDER,
     if cutoff_hz >= nyq:
         raise ValueError(
             f"lowpass_filter: cutoff_hz={cutoff_hz} Hz >= Nyquist={nyq} Hz "
-            f"(fs={fs} Hz). Bản cũ kẹp im về 0.99*Nyquist khiến bộ lọc gần "
-            f"như thông suốt mà không báo gì."
+            f"(fs={fs} Hz). Hãy giảm cutoff hoặc tăng tần số lấy mẫu."
         )
     wn = np.clip(cutoff_hz / nyq, 1e-4, 0.99)
     if zero_phase:
@@ -257,13 +233,9 @@ def square_law_envelope(x, fs, band=None, lp_cutoff=BENCHMARK_LP_CUTOFF_HZ,
                         remove_dc=True, take_sqrt=False, order=None):
     """Đường bao bằng Square-Law (bình phương + lowpass). Nhân quả sẵn.
 
-    Thay đổi so với bản cũ:
-      - Tách bandpass_order và lowpass_order. Bản cũ dùng CHUNG order=4 cho
-        cả bandpass VÀ lowpass, trong khi hybrid_envelope() dùng lowpass
-        bậc 2 -> hai phương pháp bị so sánh với bộ lọc mượt khác bậc nhau.
-        Tham số `order` cũ vẫn nhận được (alias cho bandpass_order) để
-        không phá code gọi cũ.
-      - lp_cutoff có giá trị mặc định dùng chung BENCHMARK_LP_CUTOFF_HZ.
+        `bandpass_order` và `lowpass_order` được cấu hình riêng. Tham số
+        `order` vẫn được chấp nhận như alias của `bandpass_order`.
+        `lp_cutoff` dùng giá trị chung BENCHMARK_LP_CUTOFF_HZ.
 
     take_sqrt (mặc định False — GIỮ NGUYÊN số liệu đã có):
         Square-Law không lấy căn nên đường bao có ĐƠN VỊ BÌNH PHƯƠNG của x,
@@ -285,7 +257,7 @@ def square_law_envelope(x, fs, band=None, lp_cutoff=BENCHMARK_LP_CUTOFF_HZ,
         env = np.sqrt(np.maximum(
             lowpass_filter(x_squared, fs, lp_cutoff, order=lowpass_order), 0.0))
     else:
-        # Khử DC TRƯỚC lowpass giữ đúng hành vi bản cũ.
+        # Khử DC trước lowpass để loại thành phần bình phương trung bình.
         env = lowpass_filter(x_squared - np.mean(x_squared), fs, lp_cutoff,
                              order=lowpass_order)
 
@@ -312,18 +284,14 @@ def hilbert_envelope(x, fs, band=None, bandpass_order=BENCHMARK_BANDPASS_ORDER,
     Baseline Hilbert dùng để BENCHMARK là hilbert_envelope_fir().
 
     ---------------------------------------------------------------------
-    ĐÃ SỬA: bản cũ KHÔNG lowpass và KHÔNG khử DC
     ---------------------------------------------------------------------
     Ba phương pháp kia đều kết thúc bằng lowpass + khử DC, riêng hàm này
     trả thẳng |analytic|. Đo trên cùng một tín hiệu thử:
         square_law               : mean = +7.7e-18, min = -0.605
         hilbert_fir              : mean = +6.2e-17, min = -0.997
         hybrid                   : mean = +3.0e-17, min = -0.968
-        hilbert_offline (bản cũ) : mean = +1.000,   min = +0.239   <-- lệch
-    Tức "mốc trần trên" nằm ở THANG KHÁC với chính thứ nó làm mốc: vẽ chồng
-    lên nhau thì lệch trục, còn tính chỉ số so sánh (tương quan, SNR, dải
-    động cho INT8 ở mục 2.3) thì ra số vô nghĩa. Nay dùng CHUNG lp_cutoff /
-    lowpass_order / remove_dc với ba phương pháp còn lại.
+    Nhánh offline dùng chung lp_cutoff, lowpass_order và remove_dc với các
+    phương pháp benchmark để các phép đối chiếu nằm trên cùng thang đo.
 
     zero_phase=True giữ đúng bản sắc "offline lý tưởng": cả bandpass lẫn
     lowpass đều chạy filtfilt. Lưu ý filtfilt cho đáp ứng |H|^2 nên suy
@@ -418,10 +386,7 @@ def hybrid_envelope(x, fs, band=None, bandpass_order=BENCHMARK_BANDPASS_ORDER,
     """Hybrid Envelope Demodulation — không FFT, không sqrt, luôn ổn định.
 
     ---------------------------------------------------------------------
-    LỖI TOÁN HỌC CỦA BẢN CŨ (đã sửa)
-    ---------------------------------------------------------------------
-    Bản cũ dùng sai phân LÙI bậc 1 và tự nhận là "xấp xỉ đúng lệch pha 90°
-    tại tần số trung tâm w_c":
+    Giới hạn của sai phân lùi bậc 1:
 
         I[n] = x_bp[n]
         Q[n] = (x_bp[n] - x_bp[n-1]) / (2*sin(w_c))
@@ -461,8 +426,7 @@ def hybrid_envelope(x, fs, band=None, bandpass_order=BENCHMARK_BANDPASS_ORDER,
        1 phép trừ + 1 phép nhân hằng số + buffer 3 mẫu).
     -> BẮT BUỘC trễ I đúng 1 mẫu. Nếu để I[n] = x_bp[n], tỉ số trở thành
        e^{-jw} * j*sin(w)/sin(w_c), tức sai số pha là w TRỌN (không phải
-       w/2 như bản cũ): đo trên dải 2300-3800 Hz được +30.00° ... -30.00°
-       (sai số 60° ... 120°, đổi cả DẤU ở giữa dải), tệ hơn cả bản cũ. Xem notebook 06 (bảng 06_iq_phase_amplitude.csv) để chạy lại phép đo này.
+    w/2): trên dải 2300-3800 Hz sai số pha đạt khoảng 60° ... 120°.
 
     ---------------------------------------------------------------------
     GIỚI HẠN CÒN LẠI — PHẢI ghi rõ trong báo cáo
@@ -479,9 +443,8 @@ def hybrid_envelope(x, fs, band=None, bandpass_order=BENCHMARK_BANDPASS_ORDER,
     Alpha-Max Plus Beta-Min: |I + jQ| ~= alpha*max(|I|,|Q|) + beta*min(...)
     Mặc định dùng cặp (ALPHA_MAX_MINMAX, BETA_MIN_MINMAX) = (0.9604, 0.3978)
     -> sai số biên độ tối đa 3.96% so với sqrt, đúng với cam kết "< ~4%".
-    Bản cũ dùng cặp (0.947, 0.392) là cặp tối ưu MSE, sai số tối đa thực tế
-    5.32% — tức docstring cũ hứa một đằng, hệ số làm một nẻo. Xem phần
-    ALPHA_MAX_* ở đầu file để biết vì sao chọn tiêu chí sai số TỐI ĐA.
+    Mặc định dùng cặp tối ưu sai số tối đa ALPHA_MAX_MINMAX và
+    BETA_MIN_MINMAX; cặp tối ưu MSE được giữ để đối chiếu.
     """
     band = _resolve_band(band)
     x = np.asarray(x)
@@ -512,9 +475,8 @@ def hybrid_envelope(x, fs, band=None, bandpass_order=BENCHMARK_BANDPASS_ORDER,
     env_raw = alpha * np.maximum(abs_i, abs_q) + beta * np.minimum(abs_i, abs_q)
 
     # BƯỚC 4: Lowpass nhân quả — DÙNG CHUNG lp_cutoff với Square-Law/Hilbert.
-    # Bản cũ tự đặt lp_hz = (band[1]-band[0])/2 (vd 1000 Hz) trong khi
-    # Square-Law dùng LP_CUTOFF_HZ -> đường bao 2 phương pháp bị làm mượt khác
-    # nhau, thêm một nguồn so sánh không công bằng nữa.
+    # Dùng cùng cutoff với Square-Law và FIR Hilbert để giữ giao thức
+    # benchmark nhất quán.
     env = lowpass_filter(env_raw, fs, lp_cutoff, order=lowpass_order)
 
     # BƯỚC 5: Khử DC
@@ -529,8 +491,8 @@ def hybrid_envelope(x, fs, band=None, bandpass_order=BENCHMARK_BANDPASS_ORDER,
 BENCHMARK_ENVELOPE_METHODS = ("square_law", "hilbert_fir", "hybrid")
 # "squarelaw"/"square-law" là cách viết trong notebook giai đoạn 1 (tên file
 # đầu ra features_mlp_squarelaw.parquet, cột dsp_method). Gom về tên chuẩn
-# "square_law" để code cũ không chết vì ValueError khi đi qua
-# envelope_by_method(), thay vì bắt mọi notebook đổi chuỗi.
+# Các alias này giữ cho tên phương pháp được chấp nhận nhất quán giữa các
+# notebook và API.
 ENVELOPE_METHOD_ALIASES = {
     "hilbert": "hilbert_fir",
     "squarelaw": "square_law",
@@ -607,19 +569,11 @@ def envelope_by_method(x, fs, band=None, method="square_law",
       - "hilbert_offline" : scipy.hilbert + filtfilt — CHỈ vẽ hình/tham
                             chiếu, không dùng cho bảng kết quả
 
-    "hilbert" là ALIAS của "hilbert_fir": code/notebook cũ gọi
-    method='hilbert' sẽ TỰ ĐỘNG chuyển sang baseline nhân quả, thay vì âm
-    thầm tiếp tục so sánh với bản filtfilt phi nhân quả.
+    "hilbert" là alias của "hilbert_fir" và luôn trỏ tới baseline nhân quả.
 
     ---------------------------------------------------------------------
-    take_sqrt — ĐÃ NÂNG THÀNH THAM SỐ CHUNG (trước đây là lỗi CHẶN RQ3)
-    ---------------------------------------------------------------------
-    Bản cũ chỉ chuyển tiếp take_sqrt qua **kwargs nên nó CHỈ chạy được với
-    square_law; gọi envelope_by_method(..., method="hilbert_fir",
-    take_sqrt=True) ném thẳng TypeError. Trong khi đó chính docstring của
-    square_law_envelope lại dặn "khi so sánh đầu vào AI giữa 3 phương pháp,
-    nên bật take_sqrt=True". Tức là dispatcher không chạy nổi đúng thí
-    nghiệm mà nó khuyến nghị.
+    `take_sqrt` là tham số chung để các notebook có thể truyền cùng cấu hình
+    cho cả ba phương pháp. Nó chỉ có tác dụng với Square-Law.
 
     Ý nghĩa đúng của cờ này là ĐỒNG NHẤT THỨ NGUYÊN, và chỉ square_law mới
     lệch thứ nguyên:
@@ -651,8 +605,7 @@ def envelope_by_method(x, fs, band=None, method="square_law",
             x, fs, band=band, lp_cutoff=lp_cutoff,
             bandpass_order=bandpass_order, lowpass_order=lowpass_order, **kwargs)
     if method == "hilbert_offline":
-        # ĐÃ SỬA: nhánh này trước đây nuốt im lp_cutoff/lowpass_order/kwargs,
-        # nên tham chiếu offline chạy ở một thang hoàn toàn khác 3 nhánh kia.
+        # Dùng cùng cấu hình lọc với các nhánh còn lại.
         return hilbert_envelope(
             x, fs, band=band, bandpass_order=bandpass_order,
             lp_cutoff=lp_cutoff, lowpass_order=lowpass_order, **kwargs)

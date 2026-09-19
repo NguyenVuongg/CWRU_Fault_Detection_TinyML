@@ -26,7 +26,7 @@ def resolve_label_col(feature_df: pd.DataFrame, label_col=None,
     """Chọn cột nhãn theo sơ đồ lớp đã chốt ở mục 1.1.
 
     label_col=None -> lấy "class_label" (10 lớp, bài toán CHÍNH). Nếu bảng
-    đặc trưng được sinh bằng phiên bản features_full.py cũ (chưa có cột
+    bảng đặc trưng chưa có cột
     này) thì lùi về "label" 4 lớp VÀ CẢNH BÁO, thay vì nổ lỗi — nhưng để
     báo cáo đúng đề cương thì phải build lại bảng đặc trưng.
     """

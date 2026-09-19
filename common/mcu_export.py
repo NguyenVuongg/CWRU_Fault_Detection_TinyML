@@ -154,21 +154,8 @@ def summarize_mcu_cost(model_tag: str,
     lượng trông như số đo thật.
 
     ---------------------------------------------------------------------
-    ĐÃ SỬA 5 lỗi Pylance reportArgumentType
-    ---------------------------------------------------------------------
-    1-4) Bốn tham số khai kiểu "x: str = None" / "float = None" /
-         "bytes = None". Chạy thì vẫn chạy, nhưng kiểu KHAI BÁO không chứa
-         None, nên: (a) báo lỗi ngay tại chỗ khai; (b) tệ hơn, trong thân
-         hàm trình kiểm tra tưởng biến CHẮC CHẮN có giá trị nên KHÔNG còn
-         cảnh báo khi ta quên kiểm tra None. Đúng phải là Optional[...].
-    5)   row = {"model_tag": model_tag} khiến row bị suy ra là dict[str, str]
-         (vì model_tag: str), nên mọi dòng row[...] = <số> phía dưới đều là
-         gán sai kiểu. Panel chỉ báo dòng row["tflite_size_bytes"] = len(...)
-         (int), nhưng row["latency_ms"] = float(...) và row["energy_uj"] =
-         None cũng cùng bản chất. Bảng chi phí này CỐ Ý trộn
-         str + int + float + None, nên cách đúng là khai tường minh
-         Dict[str, Any] (và đổi kiểu trả về dict -> Dict[str, Any] cho
-         khớp), không phải cast từng dòng.
+        Kết quả trả về dùng Dict[str, Any] vì một dòng chi phí có thể chứa
+        chuỗi, số nguyên, số thực và None tùy theo chỉ số đã đo được.
     """
     row: Dict[str, Any] = {"model_tag": model_tag}
 

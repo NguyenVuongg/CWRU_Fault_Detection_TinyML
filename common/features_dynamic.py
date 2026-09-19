@@ -10,18 +10,12 @@ Mọi phương pháp giải điều chế ở đây đều đi qua dsp.envelope_
 cấu hình lọc nhân quả (bậc bandpass/lowpass, lp_cutoff, cách khử DC).
 KHÔNG định nghĩa lại bản riêng ở module này.
 
-HAI ĐIỂM ĐÃ SỬA (đọc trước khi trích dẫn kết quả RQ3):
-  1. method='hilbert' trước đây gọi dsp.hilbert_envelope() — filtfilt
-     (zero-phase, phi nhân quả) + scipy.signal.hilbert() (FFT theo khối).
-     Đầu vào AI của nhánh Hilbert vì thế được lợi cả về pha LẪN độ chọn
-     lọc (filtfilt lọc 2 lượt -> |H|^2), không phản ánh được thứ MCU chạy
-     được. Nay 'hilbert' là alias của baseline NHÂN QUẢ 'hilbert_fir'.
-  2. lp_cutoff trước đây hardcode 500 Hz cho square_law nhưng hybrid tự
-     dùng (band[1]-band[0])/2 bên trong -> đường bao 2 phương pháp bị làm
-     mượt ở 2 tần số cắt khác nhau. Nay dùng chung dsp.BENCHMARK_LP_CUTOFF_HZ.
+Quy ước RQ3:
+    - method='hilbert' là alias của baseline nhân quả 'hilbert_fir'.
+    - Mọi phương pháp dùng chung dsp.BENCHMARK_LP_CUTOFF_HZ.
+    - Envelope phải được tính trên tín hiệu nguyên trước khi cắt cửa sổ.
 
-LỖI THỨ BA ĐÃ SỬA — RESET TRẠNG THÁI LỌC THEO CỬA SỔ:
-  extract_features_dynamic() (bản cũ) nhận vào các CỬA SỔ ĐÃ CẮT SẴN và
+extract_features_dynamic() nhận vào các CỬA SỔ ĐÃ CẮT SẴN và
   gọi apply_envelope_method() trên từng cửa sổ nhỏ. Mọi bộ lọc trong
   đường ống đều NHÂN QUẢ (sosfilt/lfilter/FIR) nên mỗi lần gọi là một lần
   khởi tạo trạng thái về 0: đầu mỗi cửa sổ dính transient giả tạo —
@@ -29,17 +23,15 @@ LỖI THỨ BA ĐÃ SỬA — RESET TRẠNG THÁI LỌC THEO CỬA SỔ:
   bandpass IIR bậc 4 lê thêm vài chục mẫu. Đây đúng là lỗi mà
   features_full.build_full_feature_table() đã phải tránh bằng cách tính
   envelope MỘT LẦN cho cả file rồi mới cắt cửa sổ (xem docstring hàm đó).
-    -> Hàm đúng là extract_features_dynamic_from_signals(): nhận TÍN HIỆU
+    -> Hàm chính là extract_features_dynamic_from_signals(): nhận TÍN HIỆU
        NGUYÊN chưa cắt, tự tính envelope một lần rồi cắt cửa sổ ĐỒNG BỘ
        cho cả tín hiệu thô lẫn envelope.
     -> extract_features_dynamic() (nhận cửa sổ sẵn) giữ lại ở trạng thái
        DEPRECATED, phát DeprecationWarning mỗi lần gọi. KHÔNG dùng nó cho
        kết quả RQ3 đưa vào báo cáo.
 
-Ghi chú về Hybrid: bản cũ của dsp.hybrid_envelope() dùng sai phân LÙI bậc 1
-và tự nhận "đúng 90° tại tần số trung tâm" — khẳng định đó sai (sai số pha
-bằng w_c/2). Đã chuyển sang sai phân TRUNG TÂM dạng nhân quả; xem
-docstring dsp.hybrid_envelope() để biết chứng minh và giới hạn còn lại.
+Hybrid dùng sai phân TRUNG TÂM dạng nhân quả; xem docstring
+dsp.hybrid_envelope() để biết chứng minh và giới hạn biên độ.
 """
 
 import warnings
@@ -47,10 +39,7 @@ import warnings
 import numpy as np
 import pandas as pd
 
-# Import TƯƠNG ĐỐI. Bản cũ viết "from common.config import ..." (tuyệt đối),
-# chỉ chạy được khi thư mục cha của common/ nằm trên sys.path — tức file này
-# gãy import ngay khi package được cài đặt thật hoặc đổi tên, trong khi 13
-# file còn lại trong common/ đều dùng import tương đối.
+# Import tương đối để module hoạt động nhất quán khi chạy trong package.
 from .config import (NOMINAL_RPM_BY_LOAD, RESONANCE_BAND_HZ,  # noqa: F401
                      WARMUP_SAMPLES)
 from . import dsp, features_full
@@ -89,12 +78,11 @@ def extract_features_dynamic_from_signals(signals_series, band_hz, fs=12000,
     Trích đặc trưng từ các TÍN HIỆU NGUYÊN (chưa cắt cửa sổ), với
     phương pháp giải điều chế được chỉ định.
 
-    SỐ CHIỀU THỰC TẾ LÀ 28, không phải 32 như bản cũ ghi: order.py gộp các
+    SỐ CHIỀU THỰC TẾ LÀ 28: order.py gộp các
     cột hài rơi trùng bin FFT lại với nhau (Nhóm B 12->10, Nhóm C 9->7).
     Xem features_full.EXPECTED_FEATURE_COUNTS để biết lý do.
 
-    KHẮC PHỤC LỖI CỦA extract_features_dynamic() BẢN CŨ: envelope được
-    tính MỘT LẦN trên toàn bộ tín hiệu rồi mới cắt thành cửa sổ — bộ lọc
+    Envelope được tính MỘT LẦN trên toàn bộ tín hiệu rồi mới cắt thành cửa sổ — bộ lọc
     nhân quả giữ nguyên trạng thái xuyên suốt, không còn transient giả
     tạo ở đầu mỗi cửa sổ. Cửa sổ được cắt ĐỒNG BỘ (cùng start_idx) cho cả
     tín hiệu thô (Nhóm A/B) lẫn envelope (Nhóm C) — đúng cách
@@ -123,7 +111,7 @@ def extract_features_dynamic_from_signals(signals_series, band_hz, fs=12000,
             khí + xác lập bộ lọc IIR nhân quả). Mặc định None ->
             config.WARMUP_SAMPLES, ĐÚNG BẰNG ngưỡng của
             features_full.build_full_feature_table() để hai bảng có CÙNG
-            tập cửa sổ. Truyền 0 để lấy lại hành vi cũ (không loại gì).
+            tập cửa sổ. Truyền 0 để không loại vùng warmup.
         envelope_kwargs: dict tham số bổ sung chuyển tiếp cho
             apply_envelope_method() -> dsp.envelope_by_method().
             BẮT BUỘC cho RQ3: envelope_kwargs={"take_sqrt": True} khi
@@ -221,8 +209,7 @@ def extract_features_dynamic_from_signals(signals_series, band_hz, fs=12000,
 def extract_features_dynamic(windows_series, band_hz, fs=12000, rpm=1750,
                               load_hp_series=None, method='square_law'):
     """
-    [DEPRECATED — xem "LỖI THỨ BA" ở docstring module. KHÔNG dùng cho kết
-    quả RQ3 trong báo cáo.]
+    [DEPRECATED — không dùng cho kết quả RQ3 vì hàm lọc từng cửa sổ riêng lẻ.]
 
     Rút đặc trưng (28 chiều thực tế, xem features_full.EXPECTED_FEATURE_COUNTS)
     dựa trên band_hz cố định và phương pháp giải điều chế được chỉ định.
@@ -234,8 +221,7 @@ def extract_features_dynamic(windows_series, band_hz, fs=12000, rpm=1750,
     extract_features_dynamic_from_signals() (nhận tín hiệu nguyên, tính
     envelope một lần rồi mới cắt cửa sổ) hoặc
     features_full.build_full_feature_table(envelope_method=...).
-    Hàm giữ lại chỉ để notebook cũ không gãy import, và phát
-    DeprecationWarning mỗi lần gọi.
+    Hàm được giữ để tương thích API và phát DeprecationWarning mỗi lần gọi.
 
     load_hp_series: (khuyến nghị LUÔN truyền khi dùng cho LOLO)
         pd.Series cùng chỉ số/độ dài với windows_series, chứa load_hp của
@@ -244,7 +230,7 @@ def extract_features_dynamic(windows_series, band_hz, fs=12000, rpm=1750,
         định — QUAN TRỌNG vì trong 1 fold LOLO, train_df/val_df thường
         chứa nhiều load khác nhau trộn lẫn.
 
-        Nếu để None, dùng `rpm` scalar cho mọi window (hành vi cũ - chỉ
+        Nếu để None, dùng `rpm` scalar cho mọi window (chỉ
         nên dùng khi chắc chắn windows_series đồng nhất 1 load duy nhất).
     """
     warnings.warn(

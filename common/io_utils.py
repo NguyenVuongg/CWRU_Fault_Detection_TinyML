@@ -200,12 +200,8 @@ def load_de_signal_resampled(filepath: Path, source_fs_hz, target_fs_hz: float):
     run_sanity_checks/_resolve_sampling_rate_hz), KHÔNG phải
     `declared_sample_rate_khz` (suy từ tên thư mục, có thể sai).
 
-    Đây là bước "xử lý sampling rate của Normal baseline trước khi đưa
-    vào manifest chính thức" mà mục 0.1 đề cương yêu cầu nhưng trước đó
-    chưa có code nào thực hiện — features_full.build_full_feature_table()
-    trước đây LUÔN giả định fs=12000Hz cho mọi file (kể cả Normal baseline
-    thực chất 48kHz), khiến toàn bộ đặc trưng Order/Envelope của lớp
-    Normal bị tính sai trục tần số.
+    Hàm đưa mọi tín hiệu về target_fs_hz trước khi trích đặc trưng, bao gồm
+    Normal baseline có sampling rate thực khác target.
 
     Dùng resample_poly (FIR đa pha) thay vì scipy.signal.resample (dựa
     trên FFT) vì resample_poly ổn định hơn với tỉ lệ hữu tỉ đơn giản như
@@ -416,7 +412,7 @@ def run_sanity_checks(df: pd.DataFrame) -> pd.DataFrame:
         # cấu hình sai thành "check luôn đúng". Index trực tiếp để
         # KeyError nổ ngay khi tên khóa lệch với config.SCOPE.
         target_sensor = cfg.SCOPE["sensor_location"]
-        # pd.notna() thay vì "is not None" — cùng lý do đã sửa ở check 1/7:
+            # pd.notna() xử lý đúng cả None và NaN trong cột pandas:
         # cột pandas có thể trả NaN cho các dòng vốn là None khi bị ép kiểu
         # chung với dòng khác (chưa từng biểu hiện lỗi vì Normal luôn gán
         # sẵn "DE" ở trên, nhưng sửa cho nhất quán/an toàn về sau).
@@ -431,11 +427,7 @@ def run_sanity_checks(df: pd.DataFrame) -> pd.DataFrame:
         #     check này, nhóm 48k_Drive_End chỉ bị loại "may rủi" nhờ ăn
         #     theo check thời lượng, không phải quyết định phạm vi rõ ràng)
         declared_rate = row.get("declared_sample_rate_khz")
-        # BUG ĐÃ SỬA: SCOPE không có key "target_sample_rate_khz" (chỉ có
-        # "sampling_rate_hz"), nên .get(...) trước đây LUÔN rơi về fallback
-        # hardcode "12", không thực sự đọc từ SCOPE — vô hại về số (khớp
-        # đúng 12 hiện tại) nhưng sẽ âm thầm sai nếu SCOPE["sampling_rate_hz"]
-        # từng đổi. Tính trực tiếp từ SCOPE để bám theo cấu hình thật.
+        # Lấy tần số mục tiêu trực tiếp từ SCOPE để bám theo cấu hình thật.
         target_rate = cfg.SCOPE["sampling_rate_hz"] / 1000
 
         # pd.notna() thay vì "is not None" — ĐÂY chính là chỗ gây ra bug
