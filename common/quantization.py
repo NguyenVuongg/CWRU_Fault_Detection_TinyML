@@ -2,11 +2,11 @@
 """
 common/quantization.py
 =====================
-Giai đoạn 2 — mục 2.4
+Giai đoạn 2
 Post-training full-integer quantization: Float32 -> INT8 bằng TensorFlow Lite.
 
 Nguyên tắc:
-1. Representative dataset CHỈ lấy từ X_train của từng LOLO fold.
+1. Representative dataset CHỈ lấy từ tập Train của seed được chọn làm đại diện.
 2. Calibration dùng mẫu ngẫu nhiên, có seed để tái lập.
 3. Input/output của mô hình được đặt ở INT8.
 4. Khi mô phỏng input quantization, phải clip về đúng miền INT8 trước khi cast.
@@ -22,7 +22,7 @@ def make_representative_dataset_fn(
     n_samples: int = 100,
     seed: int = 42,
 ):
-    """Tạo representative dataset chỉ từ TRAIN của fold hiện tại."""
+    """Tạo calibration dataset chỉ từ tập Train của seed được chọn làm đại diện."""
     X_train = np.asarray(X_train, dtype=np.float32)
     if len(X_train) == 0:
         raise ValueError("X_train is empty.")
@@ -77,7 +77,6 @@ def get_tflite_size(tflite_bytes: bytes) -> dict:
 
 
 def get_quantization_info(tflite_bytes: bytes) -> dict:
-    """Lấy dtype/scale/zero-point của input và output."""
     interpreter = tf.lite.Interpreter(model_content=tflite_bytes)
     interpreter.allocate_tensors()
     inp = interpreter.get_input_details()[0]
@@ -121,7 +120,6 @@ def evaluate_tflite_model(
     for i in range(len(X_test)):
         x = X_test[i:i + 1]
         x_q = np.round(x / in_scale + in_zero_point)
-        # IMPORTANT: cast without clipping can wrap out-of-range values.
         x_q = np.clip(x_q, qmin, qmax).astype(input_dtype)
 
         interpreter.set_tensor(input_detail["index"], x_q)
@@ -144,7 +142,6 @@ def compare_float_vs_int8(
     y_test,
     label_names=None,
 ) -> dict:
-    """Compare Float32 Keras vs INT8 TFLite on the same Test set."""
     float_pred_proba = keras_model.predict(X_test, verbose=0)
     float_pred = np.argmax(float_pred_proba, axis=1)
 
@@ -160,9 +157,6 @@ def compare_float_vs_int8(
     float_f1 = f1_score(y_test_idx, float_pred, average="macro")
     int8_result = evaluate_tflite_model(tflite_bytes, X_test, y_test_idx)
 
-    # "Accuracy Drop" là đại lượng mục 2.3 yêu cầu báo cáo. Báo cáo kèm CẢ F1
-    # macro vì với sơ đồ 10 lớp, lượng tự hóa có thể làm sụp riêng một lớp
-    # thiểu số mà accuracy tổng gần như không đổi.
     return {
         "float32_accuracy": float(float_acc),
         "int8_accuracy": float(int8_result["accuracy"]),
@@ -172,34 +166,7 @@ def compare_float_vs_int8(
         "delta_f1_macro": float(float_f1 - int8_result["f1_macro"]),
     }
 
-
-# ============================================================================
-# Mục 2.3 — khảo sát nhu cầu chia tỷ lệ theo KÊNH (per-channel scaling)
-# ============================================================================
 def diagnose_input_dynamic_range(X, feature_names=None, top_k: int = 8) -> dict:
-    """Đo độ lệch dải động giữa các chiều đầu vào — căn cứ để trả lời câu
-    hỏi "có cần per-channel scaling cho nhánh CNN-envelope không?" (mục 2.3).
-
-    VẤN ĐỀ: full-integer PTQ dùng MỘT cặp (scale, zero_point) DUY NHẤT cho
-    cả tensor đầu vào. Scale đó bị quyết định bởi chiều có biên độ LỚN
-    nhất, nên mọi chiều nhỏ hơn nhiều bậc độ lớn sẽ bị lượng tự về cùng
-    vài mức nguyên, tức mất trắng thông tin. Đường bao sau lowpass 500 Hz
-    có biên độ nhỏ hẳn tín hiệu thô nên nhánh envelope là nhánh dễ trúng
-    bẫy này nhất.
-
-    Trả về dict có `range_ratio` = (dải động lớn nhất) / (dải động nhỏ
-    nhất) và `n_effective_levels_min` = số mức INT8 mà chiều "yếu" nhất còn
-    dùng được trong tổng 256 mức. Diễn giải để viết vào báo cáo:
-
-      - n_effective_levels_min >= ~16  -> một scale chung là đủ, không cần
-        can thiệp; ghi nhận như một kết quả khảo sát âm tính.
-      - n_effective_levels_min < ~4   -> phải xử lý. Với đầu vào MLP: chuẩn
-        hóa Z-score theo từng đặc trưng (đã có ở mục 1.3, fit trên Train của
-        từng fold) đã đủ đưa mọi chiều về cùng thang. Với CNN 1 kênh: nhân
-        đường bao với một hệ số cố định (hoặc chuẩn hóa theo file) trước
-        khi đưa vào mô hình — KHÔNG thể "bật per-channel" ở đầu vào vì
-        TFLite chỉ per-channel cho TRỌNG SỐ conv, không cho tensor input.
-    """
     X = np.asarray(X, dtype=np.float32)
     if X.size == 0:
         raise ValueError("X is empty.")
@@ -210,7 +177,6 @@ def diagnose_input_dynamic_range(X, feature_names=None, top_k: int = 8) -> dict:
     col_range = col_max - col_min
 
     global_absmax = float(np.max(np.abs(flat)))
-    # scale mà TFLite sẽ chọn cho toàn tensor (đối xứng, 8 bit có dấu)
     global_scale = global_absmax / 127.0 if global_absmax > 0 else 0.0
     effective_levels = (col_range / global_scale) if global_scale > 0 else np.zeros_like(col_range)
 

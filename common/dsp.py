@@ -58,6 +58,7 @@ BENCHMARK_BAND_HZ = tuple(float(v) for v in RESONANCE_BAND_HZ)  # config.RESONAN
 # tín hiệu — tức nó tự biến thành một thành phần điều biên giả nằm ĐÚNG
 # trên đường bao, chỗ ta đang đi tìm vạch BPFO/BPFI. Ghim đỉnh sai số xuống
 # 3.96% quan trọng hơn hạ sai số trung bình, dù trung bình có nhích nhẹ.
+
 ALPHA_MAX_MINMAX = 0.960433870103   # tối ưu sai số TỐI ĐA (mặc định)
 BETA_MIN_MINMAX = 0.397824734759
 ALPHA_MAX_MSE = 0.947543636291      # tối ưu sai số TRUNG BÌNH BÌNH PHƯƠNG
