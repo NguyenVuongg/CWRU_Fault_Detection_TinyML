@@ -26,7 +26,7 @@ QUY ƯỚC BENCHMARK:
 """
 
 import numpy as np
-from scipy.signal import butter, filtfilt, hilbert, lfilter, sosfilt
+from scipy.signal import butter, filtfilt, group_delay, hilbert, lfilter, sos2tf, sosfilt
 
 from .config import ENV_DECIM, LP_CUTOFF_HZ, RESONANCE_BAND_HZ
 
@@ -166,7 +166,7 @@ ENVELOPE_MCU_COST = {
 }
 
 
-def envelope_mcu_cost(method):
+def envelope_mcu_cost(method: str):
     """Tra chi phí triển khai của riêng khối giải điều chế (xem
     ENVELOPE_MCU_COST). Nhận cả alias 'hilbert' như envelope_by_method()."""
     method = ENVELOPE_METHOD_ALIASES.get(method, method)
@@ -385,33 +385,7 @@ def hybrid_envelope(x, fs, band=None, bandpass_order=BENCHMARK_BANDPASS_ORDER,
                     lowpass_order=BENCHMARK_LOWPASS_ORDER,
                     remove_dc=True):
     """Hybrid Envelope Demodulation — không FFT, không sqrt, luôn ổn định.
-
-    ---------------------------------------------------------------------
-    Giới hạn của sai phân lùi bậc 1:
-
-        I[n] = x_bp[n]
-        Q[n] = (x_bp[n] - x_bp[n-1]) / (2*sin(w_c))
-
-    Khẳng định đó SAI. Với H_Q(w) = (1 - e^{-jw}) / (2*sin(w_c)):
-
-        1 - e^{-jw} = 2*sin(w/2) * e^{j*(90° - w/2)}
-
-      -> lệch pha giữa Q và I là 90° - w/2 tại MỌI w, kể cả tại chính w_c.
-         Sai số pha = w_c/2, KHÔNG triệt tiêu ở đâu cả.
-         Ví dụ dải đã chốt 2300, 3800 Hz @ fs=12 kHz: fc=3050 Hz -> w_c=90°
-         -> đo được lệch pha 45.00° tại fc (sai số 45.00°), 60.00°/30.00° ở
-            hai mép dải (sai số 30.00°/60.00°), biên độ |Q|/|I| hụt còn
-            0.500 ... 0.866.
-      -> hệ số chuẩn hóa cũng sai: |1 - e^{-j*w_c}| = 2*sin(w_c/2), nhưng
-         code chia cho 2*sin(w_c) -> biên độ Q bị nhân thêm
-         sin(w_c/2)/sin(w_c) = 1/(2*cos(w_c/2)); với w_c=90° là 0.707,
-         tức Q hụt ~29%.
-    Hệ quả: luận điểm "không méo dạng, không trễ pha" của đề cương bị phá
-    vỡ, và đường bao Hybrid bị méo dạng có hệ thống.
-
-    ---------------------------------------------------------------------
-    BẢN SỬA: sai phân TRUNG TÂM, viết ở dạng NHÂN QUẢ (trễ đúng 1 mẫu)
-    ---------------------------------------------------------------------
+    
         I[n] = x_bp[n-1]
         Q[n] = (x_bp[n] - x_bp[n-2]) / (2*sin(w_c))
 
@@ -449,7 +423,7 @@ def hybrid_envelope(x, fs, band=None, bandpass_order=BENCHMARK_BANDPASS_ORDER,
     """
     band = _resolve_band(band)
     x = np.asarray(x)
-    if len(x) < 3:
+    if len(x) < 3: # len(x) < 3 -> không đủ mẫu cho sai phân trung tâm
         raise ValueError(
             f"hybrid_envelope cần >= 3 mẫu cho sai phân trung tâm (nhận {len(x)})."
         )
@@ -512,6 +486,17 @@ ENVELOPE_METHOD_ALIASES = {
 #
 # Đặc trưng miền tần số không bị ảnh hưởng vì |FFT| bất biến với dịch
 # thời gian, nên việc giữ nguyên trễ không làm lệch bảng đặc trưng.
+#
+# CẢNH BÁO ĐÃ TỪNG BỊ VI PHẠM: notebook 06 (plot_envelope_ablation, cờ
+# align_delay) từng dùng đúng giá trị "chỉ khối trực giao" này để dịch mẫu
+# khi so sánh với tham chiếu zero-phase hilbert_offline. Vì BPF (~6 mẫu tại
+# fc) và LPF envelope (~3.5-4.3 mẫu quanh dải tần lỗi) KHÔNG được cộng vào,
+# phần "đã bù trễ" trong ảnh vẫn còn thiếu khoảng 10 mẫu (~0.8 ms), nên
+# tương quan với tham chiếu vẫn thấp (~0.4) dù đã "align". Muốn bù trễ để
+# SO SÁNH HÌNH DẠNG/CĂN CHỈNH THỜI GIAN, dùng total_causal_delay_samples()
+# (xấp xỉ giải tích, nhanh) hoặc measure_causal_delay_samples() (đo thực
+# nghiệm trên chính dữ liệu, đáng tin hơn vì BPF/LPF là IIR nên trễ nhóm
+# đổi theo tần số) — KHÔNG dùng envelope_group_delay() cho việc đó.
 ENVELOPE_GROUP_DELAY_SAMPLES = {
     "square_law": 0,
     "hilbert_fir": (BENCHMARK_HILBERT_NUMTAPS - 1) // 2,  # 32 mẫu = 2.67 ms
@@ -520,12 +505,153 @@ ENVELOPE_GROUP_DELAY_SAMPLES = {
 }
 
 
-def envelope_group_delay(method):
-    """Trễ nhóm (mẫu) của khối trực giao, chấp nhận cả alias tên phương pháp."""
+def envelope_group_delay(method: str):
+    """Trễ nhóm (mẫu) CỦA RIÊNG khối tạo tín hiệu trực giao (I/Q hoặc FIR
+    Hilbert), chấp nhận cả alias tên phương pháp.
+
+    Đây là trục CHI PHÍ (cạnh MACC, SRAM trong ENVELOPE_MCU_COST), không
+    phải trễ tổng của pipeline. KHÔNG dùng số này để dịch mẫu/căn chỉnh khi
+    so sánh với tham chiếu zero-phase — dùng total_causal_delay_samples()
+    hoặc measure_causal_delay_samples() cho việc đó (xem cảnh báo phía trên
+    ENVELOPE_GROUP_DELAY_SAMPLES).
+    """
     method = ENVELOPE_METHOD_ALIASES.get(method, method)
     if method not in ENVELOPE_GROUP_DELAY_SAMPLES:
         raise ValueError(f"method='{method}' không hợp lệ.")
     return ENVELOPE_GROUP_DELAY_SAMPLES[method]
+
+
+def _iir_group_delay_samples(sos, freq_hz, fs):
+    """Trễ nhóm (mẫu) của một bộ lọc IIR (dạng sos) tại MỘT tần số, dùng
+    scipy.signal.group_delay. freq_hz=0 được kẹp lên 1e-3 Hz vì group_delay
+    có thể không xác định đúng tại DC tuyệt đối cho một số bộ lọc.
+
+    scipy chưa kèm type-stub cho group_delay(); Pylance suy luận kiểu của
+    `w` là `int` từ giá trị mặc định 512, dù API thật (xem docstring scipy)
+    nhận cả int (số điểm lưới) lẫn mảng tần số cụ thể. Truyền [f] để lấy
+    ĐÚNG một tần số (không xấp xỉ qua lưới) là dùng đúng API, nên chỉ cần
+    bỏ qua cảnh báo kiểu tĩnh ở dòng này, không đổi logic.
+    """
+    b, a = sos2tf(sos)
+    f = max(float(freq_hz), 1e-3)
+    _, gd = group_delay((b, a), w=[f], fs=fs)  # pyright: ignore[reportArgumentType]
+    return float(gd[0])
+
+
+def total_causal_delay_samples(method: str, fs, band=None,
+                               lp_cutoff=BENCHMARK_LP_CUTOFF_HZ,
+                               bandpass_order=BENCHMARK_BANDPASS_ORDER,
+                               lowpass_order=BENCHMARK_LOWPASS_ORDER,
+                               numtaps=BENCHMARK_HILBERT_NUMTAPS,
+                               mod_freq_hz=0.0):
+    """Trễ nhóm TỔNG (mẫu) của toàn bộ pipeline envelope nhân quả: BPF +
+    khối trực giao (I/Q hoặc FIR Hilbert) + LPF envelope. Dùng số này để
+    CĂN CHỈNH (dịch mẫu) khi so đường bao nhân quả với tham chiếu zero-phase
+    (hilbert_offline) — đúng việc mà envelope_group_delay() bị cấm làm.
+
+    Cách tính:
+      - Trễ BPF lấy tại tần số trung tâm dải cộng hưởng fc=(band[0]+band[1])/2,
+        vì năng lượng sóng mang tập trung quanh đó.
+      - Trễ khối trực giao lấy đúng số nguyên mẫu (0, 1 hoặc (numtaps-1)//2),
+        vì với Hybrid (sai phân trung tâm) và FIR Hilbert Type III, trễ này
+        là HẰNG SỐ tuyệt đối, không đổi theo tần số.
+      - Trễ LPF lấy tại `mod_freq_hz` (mặc định gần 0 Hz), vì đó là dải tần
+        chứa các đặc trưng bao hình (BPFO/BPFI/BSF/f_rot). Nếu biết trước
+        tần số lỗi mục tiêu, hãy truyền đúng giá trị đó để có số chính xác
+        hơn cho trường hợp cụ thể.
+
+    GIỚI HẠN: BPF và LPF là Butterworth IIR nên trễ nhóm PHỤ THUỘC TẦN SỐ
+    (ví dụ BPF dao động ~6-10 mẫu trong dải thông, LPF ~3.5-4.3 mẫu quanh
+    100-500 Hz). Một số nguyên duy nhất không bù được hoàn toàn cho mọi
+    thành phần tần số — phần méo pha dư (dispersion) vẫn còn sau khi dịch.
+    Với số đo không phụ thuộc mô hình lọc, dùng
+    measure_causal_delay_samples() đo trực tiếp trên dữ liệu thật.
+    """
+    method = ENVELOPE_METHOD_ALIASES.get(method, method)
+    if method == "hilbert_offline":
+        return 0.0  # filtfilt: zero-phase theo định nghĩa
+
+    band = _resolve_band(band)
+    fc = (band[0] + band[1]) / 2.0
+    nyq = fs / 2.0
+
+    sos_bp = butter(bandpass_order, [band[0] / nyq, band[1] / nyq],
+                    btype="bandpass", output="sos")
+    bp_delay = _iir_group_delay_samples(sos_bp, fc, fs)
+
+    if method == "square_law":
+        block_delay = 0.0
+    elif method == "hilbert_fir":
+        block_delay = float((numtaps - 1) // 2)
+    elif method == "hybrid":
+        block_delay = 1.0
+    else:
+        raise ValueError(
+            f"method='{method}' không hợp lệ. Chọn một trong "
+            f"{BENCHMARK_ENVELOPE_METHODS} hoặc 'hilbert_offline'."
+        )
+
+    sos_lp = butter(lowpass_order, lp_cutoff / nyq, btype="lowpass", output="sos")
+    lp_delay = _iir_group_delay_samples(sos_lp, mod_freq_hz, fs)
+
+    return bp_delay + block_delay + lp_delay
+
+
+def measure_causal_delay_samples(x, fs, method: str, band=None,
+                                 lp_cutoff=BENCHMARK_LP_CUTOFF_HZ,
+                                 bandpass_order=BENCHMARK_BANDPASS_ORDER,
+                                 lowpass_order=BENCHMARK_LOWPASS_ORDER,
+                                 warmup_samples=2048, max_lag_samples=100):
+    """Đo trễ THỰC (mẫu) bằng cross-correlation giữa đường bao nhân quả của
+    `method` và tham chiếu zero-phase (hilbert_envelope, filtfilt) trên
+    CHÍNH tín hiệu x. Không phụ thuộc mô hình lọc — khuyến nghị dùng số này
+    (thay vì total_causal_delay_samples) cho hình vẽ/bảng đưa vào báo cáo,
+    vì trễ nhóm IIR không phải hằng số theo tần số còn cross-correlation đo
+    trực tiếp trên phổ thật của tín hiệu.
+
+    Quét lag từ 0..max_lag_samples, chọn lag cho tương quan Pearson lớn
+    nhất giữa đường bao nhân quả (dịch sớm lên `lag` mẫu) và tham chiếu.
+    Cả hai nhánh dùng remove_dc=False (Pearson bất biến với DC, không ảnh
+    hưởng); Square-Law dùng take_sqrt=True để cùng đơn vị [x] với các
+    phương pháp còn lại, tránh lệch hình dạng làm sai lag tìm được.
+
+    Trả về (best_lag_samples: int, corr_tai_best_lag: float).
+    """
+    method = ENVELOPE_METHOD_ALIASES.get(method, method)
+    band = _resolve_band(band)
+    x = np.asarray(x, dtype=np.float64)
+
+    n_min = warmup_samples + max_lag_samples + 100
+    if len(x) < n_min:
+        raise ValueError(
+            f"Tín hiệu quá ngắn ({len(x)} mẫu) để đo trễ đáng tin cậy "
+            f"(cần >= {n_min} mẫu). Dùng đoạn dài hơn hoặc giảm max_lag_samples."
+        )
+
+    env_causal = envelope_by_method(
+        x, fs, band=band, method=method, lp_cutoff=lp_cutoff,
+        bandpass_order=bandpass_order, lowpass_order=lowpass_order,
+        remove_dc=False, take_sqrt=True)
+    env_ref = hilbert_envelope(
+        x, fs, band=band, bandpass_order=bandpass_order, lp_cutoff=lp_cutoff,
+        lowpass_order=lowpass_order, remove_dc=False, zero_phase=True)
+
+    a = env_causal[warmup_samples:]
+    b = env_ref[warmup_samples:]
+    a = a - a.mean()
+    b = b - b.mean()
+    n = min(len(a), len(b)) - max_lag_samples
+    if n <= 10:
+        raise ValueError(
+            "Đoạn tín hiệu sau warmup_samples quá ngắn so với max_lag_samples."
+        )
+
+    best_lag, best_corr = 0, -2.0
+    for lag in range(0, max_lag_samples + 1):
+        corr = float(np.corrcoef(a[lag:lag + n], b[:n])[0, 1])
+        if corr > best_corr:
+            best_corr, best_lag = corr, lag
+    return best_lag, best_corr
 
 
 def decimate_envelope(env, fs, factor=ENV_DECIM, lp_cutoff=BENCHMARK_LP_CUTOFF_HZ):
