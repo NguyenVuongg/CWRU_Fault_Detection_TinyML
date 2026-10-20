@@ -10,9 +10,14 @@ __pycache__/
 .vscode/
 .venv/
 
-# Giai đoạn 2-3 tạm thời giữ local, chưa đưa lên repository.
-/notebooks/giai_doan_2_model/
+/notebooks/giai_doan_0_khao_sat/ 
+/notebooks/giai_doan_1_tien_xu_ly/outputs/
+/notebooks/giai_doan_2_model/outputs/
 /notebooks/giai_doan_3_dsp/
 /notebooks/giai_doan_0_khao_sat/
 /notebooks/eda_outputs/
+/notebooks/outputs/
 /tests/
+/outputs/
+/reports/
+/edge_ai/
