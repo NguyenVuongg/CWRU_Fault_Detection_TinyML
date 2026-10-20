@@ -53,6 +53,9 @@ def hz_to_order(freq_hz, rpm: float):
 # ---------------------------------------------------------------------------
 # Phạm vi dữ liệu đã chốt
 # ---------------------------------------------------------------------------
+# SCOPE["sampling_rate_hz"] là TẦN SỐ CHUẨN HÓA ĐẦU VÀO DSP sau resampling,
+# không phải khẳng định rằng mọi file nguồn đều được ghi ở cùng tần số.
+# Sampling rate nguồn được lưu riêng theo từng file trong manifest.
 SCOPE_LABELS: List[str] = ["Normal", "IR", "OR", "B"]
 SCOPE_LOADS_HP: List[int] = [0, 1, 2, 3]
 
@@ -80,12 +83,12 @@ CLASSES_10 = [
     "OR_007", "OR_014", "OR_021",
     "B_007", "B_014", "B_021",
 ]
-
+ 
 CLASSES_4 = ["Normal", "IR", "OR", "B"]
-
+ 
 LABEL_COL_BY_SCHEME = {"10class": "class_label", "4class": "label"}
 CLASSES_BY_SCHEME = {"10class": CLASSES_10, "4class": CLASSES_4}
-CLASS_SCHEME_DEFAULT = "10class"
+CLASS_SCHEME_DEFAULT = "4class"
 
 def make_class_label(
     label: Any,
@@ -122,8 +125,12 @@ def make_class_label(
 
 
 NOMINAL_RPM_BY_LOAD = {0: 1797, 1: 1772, 2: 1750, 3: 1730}
+# Các sampling rate nguồn hợp lệ mà manifest có thể xác thực hoặc suy luận.
 CANDIDATE_SAMPLING_RATES_HZ = [12000, 24000, 48000]
 
+# Chỉ dùng để suy luận fs khi file không có metadata trực tiếp. Kết quả phải
+# được gắn provenance "inferred:sample_count_and_expected_duration"; không gọi
+# là measured/declared. File có metadata trực tiếp không bị đổi fs chỉ vì độ dài.
 EXPECTED_DURATION_SEC = 10.0
 DURATION_TOLERANCE_SEC = 3.0
 

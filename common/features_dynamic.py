@@ -2,11 +2,10 @@
 """
 common/features_dynamic.py
 =========================
-Trích xuất đặc trưng động dựa trên band_hz cố định và hỗ trợ
-3 phương pháp giải điều chế: Square-Law, Hilbert, và Hybrid DSP.
+Trích xuất đặc trưng động dựa trên band_hz cố định và các phương pháp
+giải điều chế benchmark.
 
 Quy ước RQ:
-    - method='hilbert' là alias của baseline nhân quả 'hilbert_fir'.
     - Mọi phương pháp dùng chung dsp.BENCHMARK_LP_CUTOFF_HZ.
     - Envelope phải được tính trên tín hiệu nguyên trước khi cắt cửa sổ.
 """
@@ -22,7 +21,7 @@ from .dsp import hybrid_envelope  # noqa: F401
 
 
 # --- HÀM CHỌN PHƯƠNG PHÁP GIẢI ĐIỀU CHẾ ---
-def apply_envelope_method(window_data, fs, band_hz, method='square_law',
+def apply_envelope_method(window_data, fs, band_hz, method='hybrid',
                           lp_cutoff=dsp.BENCHMARK_LP_CUTOFF_HZ,
                           bandpass_order=dsp.BENCHMARK_BANDPASS_ORDER,
                           lowpass_order=dsp.BENCHMARK_LOWPASS_ORDER, **kwargs):
@@ -36,7 +35,7 @@ def apply_envelope_method(window_data, fs, band_hz, method='square_law',
 def extract_features_dynamic_from_signals(signals_series, band_hz, fs=12000,
                                           rpm=1750, load_hp_series=None,
                                           rpm_series=None,
-                                          method='square_law',
+                                          method='hybrid',
                                           window_size=2048, stride=1024,
                                           warmup_samples=None,
                                           envelope_kwargs=None):
@@ -63,6 +62,10 @@ def extract_features_dynamic_from_signals(signals_series, band_hz, fs=12000,
         rpm_list = [float(rpm)] * n_signals
 
     warmup_samples = WARMUP_SAMPLES if warmup_samples is None else int(warmup_samples)
+    if window_size % dsp.ENV_DECIM or stride % dsp.ENV_DECIM:
+        raise ValueError(
+            f"window_size và stride phải chia hết cho ENV_DECIM={dsp.ENV_DECIM}."
+        )
     envelope_kwargs = dict(envelope_kwargs or {})
 
     rows = []
@@ -76,6 +79,10 @@ def extract_features_dynamic_from_signals(signals_series, band_hz, fs=12000,
 
         env_full = apply_envelope_method(sig, fs, band_hz, method,
                                          **envelope_kwargs)
+        env_full, env_fs = dsp.decimate_envelope(
+            env_full, fs, factor=dsp.ENV_DECIM,
+            lp_cutoff=envelope_kwargs.get("lp_cutoff", dsp.BENCHMARK_LP_CUTOFF_HZ),
+        )
 
         for i in range(num_windows):
             s0 = i * stride
@@ -83,14 +90,16 @@ def extract_features_dynamic_from_signals(signals_series, band_hz, fs=12000,
                 continue
             
             x_window = sig[s0:s0 + window_size]
-            env_window = env_full[s0:s0 + window_size]
+            env_start = s0 // dsp.ENV_DECIM
+            env_end = (s0 + window_size) // dsp.ENV_DECIM
+            env_window = env_full[env_start:env_end]
 
             feats = {}
             feats.update(features_full.extract_time_domain_features(x_window))
             feats.update(features_full.extract_order_domain_features(
                 x_window, fs=fs, rpm=current_rpm))
             feats.update(features_full.extract_envelope_features_from_envelope(
-                env_window, fs=fs, rpm=current_rpm))
+                env_window, fs=env_fs, rpm=current_rpm))
             
             rows.append({"signal_idx": signal_idx, "window_idx": i,
                          "start_idx": s0, **feats})
@@ -102,7 +111,7 @@ def extract_features_dynamic_from_signals(signals_series, band_hz, fs=12000,
 
 
 def extract_features_dynamic(windows_series, band_hz, fs=12000, rpm=1750,
-                              load_hp_series=None, method='square_law'):
+                              load_hp_series=None, method='hybrid'):
     """
     [DEPRECATED — không dùng cho kết quả RQ trong báo cáo.]
     """
@@ -135,8 +144,9 @@ def extract_features_dynamic(windows_series, band_hz, fs=12000, rpm=1750,
         time_feats = features_full.extract_time_domain_features(w_raw)
         order_feats = features_full.extract_order_domain_features(w_raw, fs=fs, rpm=current_rpm)
 
-        env_signal = apply_envelope_method(w_raw, fs, band_hz, method)
-        env_feats = features_full.extract_envelope_features_from_envelope(env_signal, fs=fs, rpm=current_rpm)
+        env_feats = features_full.extract_envelope_features(
+            w_raw, fs=fs, rpm=current_rpm, band_hz=band_hz, method=method
+        )
 
         all_feats = {}
         all_feats.update(time_feats)

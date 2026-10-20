@@ -11,18 +11,13 @@ Toàn bộ đường ống được đưa vào bảng benchmark phải NHÂN QU�
 mục tiêu của đề tài là chi phí/hiệu năng TRÊN MCU chạy realtime.
 
 QUY ƯỚC BENCHMARK:
-  - Mặc định mọi bộ lọc trong module này là NHÂN QUẢ (sosfilt/lfilter).
+    - Mặc định mọi bộ lọc trong module này là NHÂN QUẢ (sosfilt).
     zero_phase=True chỉ dành cho minh họa/vẽ phổ offline.
-  - Baseline Hilbert dùng cho benchmark là hilbert_envelope_fir(): FIR
-    Hilbert transformer NHÂN QUẢ, độ trễ nhóm cố định (numtaps-1)/2 mẫu,
-    triển khai được trên MCU và PHẢI được tính chi phí (numtaps MAC/mẫu +
-    numtaps buffer) vào bảng RQ2.
   - hilbert_envelope() (scipy, phi nhân quả) giữ lại CHỈ để tham chiếu
     offline / vẽ hình — KHÔNG đưa vào bảng RQ2/RQ3.
-  - Ba phương pháp benchmark dùng CHUNG: bandpass_order, lp_cutoff,
-    lowpass_order và cách khử DC. Xem các hằng BENCHMARK_* và
-    envelope_by_method() — dispatcher DUY NHẤT, để không tồn tại 2 cấu
-    hình "công bằng" khác nhau ở 2 module.
+    - Phương pháp benchmark và tham chiếu offline dùng CHUNG:
+    bandpass_order, lp_cutoff, lowpass_order và cách khử DC. Xem các hằng
+    BENCHMARK_* và envelope_by_method() — dispatcher DUY NHẤT.
 """
 
 import numpy as np
@@ -31,13 +26,12 @@ from scipy.signal import butter, filtfilt, group_delay, hilbert, lfilter, sos2tf
 from .config import ENV_DECIM, LP_CUTOFF_HZ, RESONANCE_BAND_HZ
 
 # ---------------------------------------------------------------------------
-# Cấu hình dùng CHUNG cho cả 3 phương pháp benchmark (RQ2/RQ3).
+# Cấu hình dùng CHUNG cho cả 2 phương pháp benchmark (RQ2/RQ3).
 # Đổi ở ĐÂY, không hardcode rải rác trong từng hàm/notebook.
 # ---------------------------------------------------------------------------
 BENCHMARK_BANDPASS_ORDER = 4
 BENCHMARK_LOWPASS_ORDER = 2
 BENCHMARK_LP_CUTOFF_HZ = float(LP_CUTOFF_HZ)  # nguồn duy nhất: config.LP_CUTOFF_HZ
-BENCHMARK_HILBERT_NUMTAPS = 65  # lẻ -> trễ nhóm (65-1)/2 = 32 mẫu (nguyên)
 BENCHMARK_BAND_HZ = tuple(float(v) for v in RESONANCE_BAND_HZ)  # config.RESONANCE_BAND_HZ
 
 # ---------------------------------------------------------------------------
@@ -69,7 +63,7 @@ def _resolve_band(band):
     """band=None -> lấy dải cộng hưởng đã chốt ở config (mục 1.2).
 
     Để mọi hàm envelope có CÙNG một dải mặc định, thay vì mỗi notebook tự
-    truyền một dải rồi so sánh 3 phương pháp trên 3 dải khác nhau.
+    truyền một dải rồi so sánh các phương pháp trên những dải khác nhau.
     """
     if band is None:
         return BENCHMARK_BAND_HZ
@@ -77,11 +71,67 @@ def _resolve_band(band):
         raise ValueError(f"band phải là (low_hz, high_hz) với low < high, nhận {band!r}.")
     return band
 
+# Chế độ chọn hệ số chuẩn hóa cho nhánh Q của Hybrid.
+# "center" giữ hành vi cũ; "minimax" giảm sai lệch tương đối lớn nhất trên band.
+HYBRID_Q_MODES = ("center", "minimax")
+HYBRID_Q_MODE_DEFAULT = "minimax"
+
+
+def hybrid_sin_wc(fs, band=None, q_mode=HYBRID_Q_MODE_DEFAULT, fc_hz=None):
+    """Tính sin(w_c) cho bộ sai phân I/Q của Hybrid.
+
+    center: dùng tâm số học của band (hành vi cũ).
+    minimax: lấy trung điểm giữa min/max sin(w) trên band để tối thiểu hóa
+    sai lệch tương đối lớn nhất |sin(w)/sin(w_c) - 1|.
+    Nếu truyền fc_hz, tần số này được ưu tiên hơn q_mode tự động.
+    """
+    try:
+        fs = float(fs)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"fs phải là số dương, nhận {fs!r}.") from exc
+    if not np.isfinite(fs) or fs <= 0.0:
+        raise ValueError(f"fs phải là số dương hữu hạn, nhận {fs!r}.")
+    if q_mode not in HYBRID_Q_MODES:
+        raise ValueError(f"q_mode={q_mode!r} không hợp lệ; chọn {HYBRID_Q_MODES}.")
+
+    band = _resolve_band(band)
+    low_hz, high_hz = float(band[0]), float(band[1])
+    if not (0.0 < low_hz < high_hz < fs / 2.0):
+        raise ValueError(f"band phải thỏa 0 < low < high < fs/2; band={band}, fs={fs}.")
+
+    if fc_hz is not None:
+        try:
+            fc = float(fc_hz)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"fc_hz phải là số hợp lệ, nhận {fc_hz!r}.") from exc
+        if not np.isfinite(fc) or not 0.0 < fc < fs / 2.0:
+            raise ValueError(f"fc_hz phải nằm trong (0, fs/2), nhận {fc_hz!r}.")
+        return float(np.sin(2.0 * np.pi * fc / fs))
+
+    if q_mode == "center":
+        # Giữ nguyên phép tính của mode center để đối chứng với phiên bản cũ.
+        fc = (band[0] + band[1]) / 2.0
+        w_c = 2.0 * np.pi * fc / fs
+        return float(np.sin(w_c))
+
+    edge_sines = (
+        float(np.sin(2.0 * np.pi * low_hz / fs)),
+        float(np.sin(2.0 * np.pi * high_hz / fs)),
+    )
+    max_sine = max(edge_sines)
+    if low_hz <= fs / 4.0 <= high_hz:
+        max_sine = 1.0
+    min_sine = min(edge_sines)
+    sin_wc = 0.5 * (max_sine + min_sine)
+    if not np.isfinite(sin_wc) or sin_wc <= 0.0:
+        raise ValueError(f"Không xác định được sin(w_c) hợp lệ cho band={band}, fs={fs}.")
+    return float(sin_wc)
+
 
 # ---------------------------------------------------------------------------
 # CHI PHÍ TRÊN MCU của RIÊNG khối giải điều chế (RQ2/RQ3, mục 1.2 và 3.1)
 # ---------------------------------------------------------------------------
-# CHỮ "RIÊNG" LÀ QUAN TRỌNG: cả ba phương pháp dùng CHUNG bandpass
+# CHỮ "RIÊNG" LÀ QUAN TRỌNG: các phương pháp dùng CHUNG bandpass
 # Butterworth bậc 4 và lowpass bậc 2 (chi phí xem SHARED_STAGE_COST bên
 # dưới). Hai khối đó triệt tiêu khi so sánh, nên
 # bảng dưới chỉ đếm phần KHÁC NHAU. Cộng thêm SHARED_STAGE_COST nếu cần
@@ -117,24 +167,8 @@ ENVELOPE_MCU_COST = {
         "state_words": 0,
         "extra_latency_samples": 0,
         "note": (
-            "Chỉ 1 phép nhân x*x. Rẻ nhất tuyệt đối. Đánh đổi: đường bao có "
-            "đơn vị BÌNH PHƯƠNG của x (khác 2 phương pháp kia) và phép bình "
-            "phương sinh thành phần tần số kép 2*fc phải dựa vào lowpass lọc "
-            "bỏ. Bật take_sqrt=True thì phải cộng thêm 1 sqrt/mẫu."
-        ),
-    },
-    "hilbert_fir": {
-        "mults_per_sample": 16 + 2,   # 16 (FIR dùng đối xứng lẻ) + I^2, Q^2
-        "adds_per_sample": 32 + 1,
-        "sqrt_per_sample": 1,
-        "state_words": BENCHMARK_HILBERT_NUMTAPS,
-        "extra_latency_samples": (BENCHMARK_HILBERT_NUMTAPS - 1) // 2,
-        "note": (
-            "FIR Type III 65 tap. Ngây thơ là 65 MAC/mẫu, nhưng h[n]=0 với mọi "
-            "n chẵn nên chỉ còn 32 tap khác 0; thêm tính phản đối xứng "
-            "h[n] = -h[64-n] thì ghép cặp còn 16 nhân + 32 cộng/trừ. Vẫn phải "
-            "giữ delay line 65 từ và chịu trễ nhóm 32 mẫu. Cộng sqrt(I^2+Q^2) "
-            "— đúng phép toán mà Alpha-Max sinh ra để né."
+            "Bình phương tín hiệu sau bandpass rồi lowpass để lấy đường bao. "
+            "Đường bao mang đơn vị bình phương của tín hiệu."
         ),
     },
     "hybrid": {
@@ -147,8 +181,8 @@ ENVELOPE_MCU_COST = {
             "Q[n]=(x[n]-x[n-2])*k là 1 trừ + 1 nhân hằng số; Alpha-Max là "
             "2 nhân + 1 cộng + 1 phép so sánh (max/min) + 2 phép lấy trị tuyệt "
             "đối (xóa bit dấu). Buffer 3 mẫu, trễ 1 mẫu, KHÔNG sqrt, KHÔNG FFT. "
-            "Đây là luận điểm chi phí chính của đề tài: rẻ xấp xỉ Square-Law "
-            "nhưng giữ được độ lệch pha 90 độ giống Hilbert."
+            "Đây là luận điểm chi phí chính của đề tài: giữ được độ lệch "
+            "pha 90 độ giống Hilbert với chi phí thấp."
         ),
     },
     "hilbert_offline": {
@@ -167,8 +201,7 @@ ENVELOPE_MCU_COST = {
 
 
 def envelope_mcu_cost(method: str):
-    """Tra chi phí triển khai của riêng khối giải điều chế (xem
-    ENVELOPE_MCU_COST). Nhận cả alias 'hilbert' như envelope_by_method()."""
+    """Tra chi phí triển khai của riêng khối giải điều chế (xem ENVELOPE_MCU_COST)."""
     method = ENVELOPE_METHOD_ALIASES.get(method, method)
     if method not in ENVELOPE_MCU_COST:
         raise ValueError(
@@ -225,46 +258,45 @@ def lowpass_filter(x, fs, cutoff_hz, order=BENCHMARK_LOWPASS_ORDER,
     return np.asarray(sosfilt(sos, x))
 
 
+def dc_blocker(x, pole=0.995):
+    """Khử DC bằng bộ lọc nhân quả bậc một, không dùng trung bình toàn file."""
+    x = np.asarray(x, dtype=np.float64)
+    pole = float(pole)
+    if not np.isfinite(pole) or not 0.0 <= pole < 1.0:
+        raise ValueError(f"pole phải hữu hạn và thuộc [0, 1), nhận {pole!r}.")
+    if x.ndim != 1:
+        raise ValueError(f"dc_blocker yêu cầu tín hiệu 1D, nhận shape={x.shape}.")
+    if not np.all(np.isfinite(x)):
+        raise ValueError("dc_blocker không chấp nhận NaN hoặc Inf.")
+    return np.asarray(lfilter([1.0, -1.0], [1.0, -pole], x), dtype=np.float64)
+
+
+def _finish_envelope(env_raw, fs, lp_cutoff, lowpass_order, remove_dc,
+                     dc_blocker_pole):
+    env = lowpass_filter(env_raw, fs, lp_cutoff, order=lowpass_order)
+    if remove_dc:
+        env = dc_blocker(env, pole=dc_blocker_pole)
+    return np.asarray(env, dtype=np.float64)
+
+
 # ===========================================================================
-# 1. SQUARE-LAW (baseline nhẹ)
+# 1. SQUARE-LAW (baseline)
 # ===========================================================================
 def square_law_envelope(x, fs, band=None, lp_cutoff=BENCHMARK_LP_CUTOFF_HZ,
                         bandpass_order=BENCHMARK_BANDPASS_ORDER,
                         lowpass_order=BENCHMARK_LOWPASS_ORDER,
-                        remove_dc=True, take_sqrt=False, order=None):
-    """Đường bao bằng Square-Law (bình phương + lowpass). Nhân quả sẵn.
-
-        `bandpass_order` và `lowpass_order` được cấu hình riêng. Tham số
-        `order` vẫn được chấp nhận như alias của `bandpass_order`.
-        `lp_cutoff` dùng giá trị chung BENCHMARK_LP_CUTOFF_HZ.
-
-    take_sqrt (mặc định False — GIỮ NGUYÊN số liệu đã có):
-        Square-Law không lấy căn nên đường bao có ĐƠN VỊ BÌNH PHƯƠNG của x,
-        khác Hilbert/Hybrid (đơn vị của x). Với RQ3, dải động khác nhau này
-        ảnh hưởng trực tiếp tới lượng tử hóa INT8 (mục 2.3). Khi so sánh
-        đầu vào AI giữa 3 phương pháp, nên bật take_sqrt=True để đồng nhất
-        đơn vị, và ghi rõ trong báo cáo rằng phép sqrt này là chi phí phải
-        trả (đúng thứ mà Alpha-Max sinh ra để né).
-    """
+                        remove_dc=True, order=None, dc_blocker_pole=0.995):
+    """Đường bao Square-Law: bình phương tín hiệu đã bandpass rồi lowpass."""
     if order is not None:
         bandpass_order = order
     band = _resolve_band(band)
 
     x_bp = bandpass_filter(x, fs, band[0], band[1], order=bandpass_order,
                            zero_phase=False)
-
     x_squared = x_bp ** 2
-    if take_sqrt:
-        env = np.sqrt(np.maximum(
-            lowpass_filter(x_squared, fs, lp_cutoff, order=lowpass_order), 0.0))
-    else:
-        # Khử DC trước lowpass để loại thành phần bình phương trung bình.
-        env = lowpass_filter(x_squared - np.mean(x_squared), fs, lp_cutoff,
-                             order=lowpass_order)
-
-    if remove_dc:
-        env = env - np.mean(env)
-    return np.asarray(env, dtype=np.float64)
+    return _finish_envelope(
+        x_squared, fs, lp_cutoff, lowpass_order, remove_dc, dc_blocker_pole
+    )
 
 
 # ===========================================================================
@@ -273,107 +305,33 @@ def square_law_envelope(x, fs, band=None, lp_cutoff=BENCHMARK_LP_CUTOFF_HZ,
 def hilbert_envelope(x, fs, band=None, bandpass_order=BENCHMARK_BANDPASS_ORDER,
                      lp_cutoff=BENCHMARK_LP_CUTOFF_HZ,
                      lowpass_order=BENCHMARK_LOWPASS_ORDER,
-                     remove_dc=True, zero_phase=True):
+                     remove_dc=True, zero_phase=False, dc_blocker_pole=0.995,
+                     align_delay=True):
     """[CHỈ THAM CHIẾU OFFLINE — KHÔNG ĐƯA VÀO BẢNG RQ2/RQ3]
 
-    scipy.signal.hilbert() là biến đổi theo KHỐI dựa trên FFT (phi nhân
-    quả): nó cần toàn bộ đoạn tín hiệu, nên không tồn tại phiên bản
-    "chạy theo mẫu" tương ứng trên MCU. Dùng zero_phase=True ở bandpass để
-    tái lập đúng đường bao lý tưởng kinh điển (mục đích duy nhất: vẽ hình
-    và làm mốc "trần trên" cho chất lượng đường bao).
-
-    Baseline Hilbert dùng để BENCHMARK là hilbert_envelope_fir().
-
-    ---------------------------------------------------------------------
-    ---------------------------------------------------------------------
-    Ba phương pháp kia đều kết thúc bằng lowpass + khử DC, riêng hàm này
-    trả thẳng |analytic|. Đo trên cùng một tín hiệu thử:
-        square_law               : mean = +7.7e-18, min = -0.605
-        hilbert_fir              : mean = +6.2e-17, min = -0.997
-        hybrid                   : mean = +3.0e-17, min = -0.968
-    Nhánh offline dùng chung lp_cutoff, lowpass_order và remove_dc với các
-    phương pháp benchmark để các phép đối chiếu nằm trên cùng thang đo.
-
-    zero_phase=True giữ đúng bản sắc "offline lý tưởng": cả bandpass lẫn
-    lowpass đều chạy filtfilt. Lưu ý filtfilt cho đáp ứng |H|^2 nên suy
-    giảm gấp đôi (tính bằng dB) so với nhánh nhân quả — đó là chủ ý, vì hàm
-    này là tham chiếu CHẤT LƯỢNG, không phải ứng viên triển khai.
+    scipy.signal.hilbert() là phép biến đổi theo khối, phi nhân quả, chỉ dùng
+    làm tham chiếu offline. Mặc định BPF/LPF đều causal sosfilt, cùng cấu hình
+    với Hybrid. Đường bao được trễ một mẫu để cân bằng trễ I/Q của Hybrid.
+    zero_phase=True chỉ dành cho khảo sát offline riêng, không dùng để so sánh
+    trực tiếp trong pipeline chung.
     """
     band = _resolve_band(band)
     filtered = bandpass_filter(x, fs, band[0], band[1], order=bandpass_order,
                                zero_phase=zero_phase)
     env = np.abs(np.asarray(hilbert(filtered)))
-    env = lowpass_filter(env, fs, lp_cutoff, order=lowpass_order,
-                         zero_phase=zero_phase)
-    if remove_dc:
-        env = env - np.mean(env)
-    return np.asarray(env, dtype=np.float64)
-
-
-def design_fir_hilbert(numtaps=BENCHMARK_HILBERT_NUMTAPS):
-    """Thiết kế FIR Hilbert transformer (Type III, phản đối xứng).
-
-    Đáp ứng xung lý tưởng h[n] = 2/(pi*n) với n lẻ, 0 với n chẵn; cắt cửa
-    sổ Hamming để giảm gợn dải thông.
-
-    numtaps PHẢI LẺ để độ trễ nhóm (numtaps-1)/2 là SỐ NGUYÊN mẫu — nhờ đó
-    việc căn chỉnh nhánh I chỉ cần một buffer dịch số nguyên trên MCU,
-    không phải nội suy phân số mẫu.
-
-    Chi phí MCU (phải ghi vào bảng RQ2): numtaps phép MAC/mẫu + buffer
-    numtaps mẫu — đây chính là con số mà kiến trúc Hybrid nhắm tới việc
-    cắt giảm.
-    """
-    if numtaps % 2 == 0:
-        raise ValueError(
-            f"numtaps phải LẺ để trễ nhóm là số nguyên mẫu (nhận {numtaps})."
-        )
-    M = (numtaps - 1) // 2
-    n = np.arange(-M, M + 1)
-    h = np.zeros(numtaps, dtype=np.float64)
-    odd = (n % 2) != 0
-    h[odd] = 2.0 / (np.pi * n[odd])
-    return h * np.hamming(numtaps)
-
-
-def hilbert_envelope_fir(x, fs, band=None, bandpass_order=BENCHMARK_BANDPASS_ORDER,
-                         numtaps=BENCHMARK_HILBERT_NUMTAPS,
-                         lp_cutoff=BENCHMARK_LP_CUTOFF_HZ,
-                         lowpass_order=BENCHMARK_LOWPASS_ORDER,
-                         remove_dc=True):
-    """[BASELINE HILBERT DÙNG CHO BENCHMARK — nhân quả, chạy được trên MCU]
-
-    Pipeline:
-      1. Bandpass Butterworth NHÂN QUẢ (cùng bậc với 2 phương pháp còn lại)
-      2. Q = FIR Hilbert transformer nhân quả (trễ nhóm M = (numtaps-1)/2)
-         I = x_bp trễ ĐÚNG M mẫu -> I/Q căn chỉnh, lệch pha ~90° trên toàn
-         dải thông (khác hẳn xấp xỉ sai phân, xem hybrid_envelope)
-      3. Biên độ THẬT: sqrt(I^2 + Q^2)  (baseline có sqrt — chi phí này là
-         thứ Alpha-Max muốn loại bỏ)
-      4. Lowpass + khử DC dùng CHUNG cấu hình với Square-Law/Hybrid
-
-    Lưu ý về M mẫu đầu: mọi phương pháp nhân quả đều có đoạn transient đầu
-    (bandpass IIR, FIR Hilbert, lowpass). Khi cắt cửa sổ nên bỏ vài trăm
-    mẫu đầu file hoặc tính đường bao MỘT LẦN cho cả file rồi mới cắt (đúng
-    cách features_full.build_full_feature_table đang làm).
-    """
-    band = _resolve_band(band)
-    x_bp = bandpass_filter(x, fs, band[0], band[1], order=bandpass_order,
-                           zero_phase=False)
-    h = design_fir_hilbert(numtaps)
-    M = (numtaps - 1) // 2
-
-    q = np.asarray(lfilter(h, [1.0], x_bp), dtype=np.float64)
-
-    i_delayed = np.zeros_like(x_bp, dtype=np.float64)
-    if M < len(x_bp):
-        i_delayed[M:] = x_bp[:len(x_bp) - M]
-
-    env = np.sqrt(i_delayed ** 2 + q ** 2)
-    env = lowpass_filter(env, fs, lp_cutoff, order=lowpass_order)
-    if remove_dc:
-        env = env - np.mean(env)
-    return np.asarray(env, dtype=np.float64)
+    if align_delay and len(env):
+        aligned = np.zeros_like(env)
+        aligned[1:] = env[:-1]
+        env = aligned
+    if zero_phase:
+        env = lowpass_filter(env, fs, lp_cutoff, order=lowpass_order,
+                             zero_phase=True)
+        if remove_dc:
+            env = dc_blocker(env, pole=dc_blocker_pole)
+        return np.asarray(env, dtype=np.float64)
+    return _finish_envelope(
+        env, fs, lp_cutoff, lowpass_order, remove_dc, dc_blocker_pole
+    )
 
 
 # ===========================================================================
@@ -383,7 +341,8 @@ def hybrid_envelope(x, fs, band=None, bandpass_order=BENCHMARK_BANDPASS_ORDER,
                     alpha=ALPHA_MAX_MINMAX, beta=BETA_MIN_MINMAX,
                     lp_cutoff=BENCHMARK_LP_CUTOFF_HZ,
                     lowpass_order=BENCHMARK_LOWPASS_ORDER,
-                    remove_dc=True):
+                    remove_dc=True, dc_blocker_pole=0.995,
+                    q_mode=HYBRID_Q_MODE_DEFAULT, fc_hz=None):
     """Hybrid Envelope Demodulation — không FFT, không sqrt, luôn ổn định.
     
         I[n] = x_bp[n-1]
@@ -428,10 +387,8 @@ def hybrid_envelope(x, fs, band=None, bandpass_order=BENCHMARK_BANDPASS_ORDER,
             f"hybrid_envelope cần >= 3 mẫu cho sai phân trung tâm (nhận {len(x)})."
         )
 
-    fc = (band[0] + band[1]) / 2.0
-    w_c = 2.0 * np.pi * fc / fs
-    sin_wc = np.sin(w_c)
-    if abs(sin_wc) < 1e-8:  # phòng chia 0 khi fc ~ 0 hoặc fc ~ fs/2
+    sin_wc = hybrid_sin_wc(fs, band=band, q_mode=q_mode, fc_hz=fc_hz)
+    if abs(sin_wc) < 1e-8:  # phòng chia 0 khi fc gần DC hoặc Nyquist
         sin_wc = 1e-8
 
     # BƯỚC 1: Bandpass nhân quả (cùng bậc với 2 phương pháp còn lại)
@@ -449,65 +406,30 @@ def hybrid_envelope(x, fs, band=None, bandpass_order=BENCHMARK_BANDPASS_ORDER,
     abs_i, abs_q = np.abs(i_ch), np.abs(q_ch)
     env_raw = alpha * np.maximum(abs_i, abs_q) + beta * np.minimum(abs_i, abs_q)
 
-    # BƯỚC 4: Lowpass nhân quả — DÙNG CHUNG lp_cutoff với Square-Law/Hilbert.
-    # Dùng cùng cutoff với Square-Law và FIR Hilbert để giữ giao thức
-    # benchmark nhất quán.
-    env = lowpass_filter(env_raw, fs, lp_cutoff, order=lowpass_order)
-
-    # BƯỚC 5: Khử DC
-    if remove_dc:
-        env = env - np.mean(env)
-    return np.asarray(env, dtype=np.float64)
+    # BƯỚC 4: LPF và DC blocker chung với nhánh FFT Hilbert.
+    return _finish_envelope(
+        env_raw, fs, lp_cutoff, lowpass_order, remove_dc, dc_blocker_pole
+    )
 
 
 # ===========================================================================
 # DISPATCHER DUY NHẤT cho RQ2/RQ3
 # ===========================================================================
-BENCHMARK_ENVELOPE_METHODS = ("square_law", "hilbert_fir", "hybrid")
-# "squarelaw"/"square-law" là cách viết trong notebook giai đoạn 1 (tên file
-# đầu ra features_mlp_squarelaw.parquet, cột dsp_method). Gom về tên chuẩn
-# Các alias này giữ cho tên phương pháp được chấp nhận nhất quán giữa các
-# notebook và API.
+BENCHMARK_ENVELOPE_METHODS = ("square_law", "hybrid", "hilbert_offline")
 ENVELOPE_METHOD_ALIASES = {
-    "hilbert": "hilbert_fir",
     "squarelaw": "square_law",
     "square-law": "square_law",
 }
 
-
-# Trễ nhóm RIÊNG của khối tạo tín hiệu trực giao. KHÔNG tính chuỗi
-# bandpass/lowpass vì cả ba phương pháp dùng chung nên phần đó triệt tiêu khi
-# so sánh.
-#
-# KHÔNG dùng để bù trễ ở bất kỳ đâu trong đường dữ liệu: trễ nhóm là thuộc
-# tính của phương pháp lấy đường bao, không phải sai số. Đường bao được giữ
-# nguyên đúng như ra khỏi khối DSP. Bảng giá trị này chỉ để BÁO CÁO độ trễ
-# như một trục chi phí (cạnh MACC và SRAM) và để ghi nhãn hình vẽ.
-#
-# Đặc trưng miền tần số không bị ảnh hưởng vì |FFT| bất biến với dịch
-# thời gian, nên việc giữ nguyên trễ không làm lệch bảng đặc trưng.
-#
-# CẢNH BÁO ĐÃ TỪNG BỊ VI PHẠM: notebook 06 (plot_envelope_ablation, cờ
-# align_delay) từng dùng đúng giá trị "chỉ khối trực giao" này để dịch mẫu
-# khi so sánh với tham chiếu zero-phase hilbert_offline. Vì BPF (~6 mẫu tại
-# fc) và LPF envelope (~3.5-4.3 mẫu quanh dải tần lỗi) KHÔNG được cộng vào,
-# phần "đã bù trễ" trong ảnh vẫn còn thiếu khoảng 10 mẫu (~0.8 ms), nên
-# tương quan với tham chiếu vẫn thấp (~0.4) dù đã "align". Muốn bù trễ để
-# SO SÁNH HÌNH DẠNG/CĂN CHỈNH THỜI GIAN, dùng total_causal_delay_samples()
-# (xấp xỉ giải tích, nhanh) hoặc measure_causal_delay_samples() (đo thực
-# nghiệm trên chính dữ liệu, đáng tin hơn vì BPF/LPF là IIR nên trễ nhóm
-# đổi theo tần số) — KHÔNG dùng envelope_group_delay() cho việc đó.
 ENVELOPE_GROUP_DELAY_SAMPLES = {
     "square_law": 0,
-    "hilbert_fir": (BENCHMARK_HILBERT_NUMTAPS - 1) // 2,  # 32 mẫu = 2.67 ms
     "hybrid": 1,                                          # sai phân trung tâm
-    "hilbert_offline": 0,                                 # filtfilt: zero-phase
+    "hilbert_offline": 1,                                 # trễ nhân tạo để căn với Hybrid
 }
 
 
 def envelope_group_delay(method: str):
-    """Trễ nhóm (mẫu) CỦA RIÊNG khối tạo tín hiệu trực giao (I/Q hoặc FIR
-    Hilbert), chấp nhận cả alias tên phương pháp.
+    """Trễ nhóm (mẫu) CỦA RIÊNG khối tạo tín hiệu trực giao.
 
     Đây là trục CHI PHÍ (cạnh MACC, SRAM trong ENVELOPE_MCU_COST), không
     phải trễ tổng của pipeline. KHÔNG dùng số này để dịch mẫu/căn chỉnh khi
@@ -542,19 +464,17 @@ def total_causal_delay_samples(method: str, fs, band=None,
                                lp_cutoff=BENCHMARK_LP_CUTOFF_HZ,
                                bandpass_order=BENCHMARK_BANDPASS_ORDER,
                                lowpass_order=BENCHMARK_LOWPASS_ORDER,
-                               numtaps=BENCHMARK_HILBERT_NUMTAPS,
                                mod_freq_hz=0.0):
     """Trễ nhóm TỔNG (mẫu) của toàn bộ pipeline envelope nhân quả: BPF +
-    khối trực giao (I/Q hoặc FIR Hilbert) + LPF envelope. Dùng số này để
+    khối trực giao + LPF envelope. Dùng số này để
     CĂN CHỈNH (dịch mẫu) khi so đường bao nhân quả với tham chiếu zero-phase
     (hilbert_offline) — đúng việc mà envelope_group_delay() bị cấm làm.
 
     Cách tính:
       - Trễ BPF lấy tại tần số trung tâm dải cộng hưởng fc=(band[0]+band[1])/2,
         vì năng lượng sóng mang tập trung quanh đó.
-      - Trễ khối trực giao lấy đúng số nguyên mẫu (0, 1 hoặc (numtaps-1)//2),
-        vì với Hybrid (sai phân trung tâm) và FIR Hilbert Type III, trễ này
-        là HẰNG SỐ tuyệt đối, không đổi theo tần số.
+            - Trễ khối trực giao lấy đúng số nguyên mẫu (0 hoặc 1), vì với Hybrid
+                (sai phân trung tâm), trễ này là HẰNG SỐ tuyệt đối.
       - Trễ LPF lấy tại `mod_freq_hz` (mặc định gần 0 Hz), vì đó là dải tần
         chứa các đặc trưng bao hình (BPFO/BPFI/BSF/f_rot). Nếu biết trước
         tần số lỗi mục tiêu, hãy truyền đúng giá trị đó để có số chính xác
@@ -568,9 +488,6 @@ def total_causal_delay_samples(method: str, fs, band=None,
     measure_causal_delay_samples() đo trực tiếp trên dữ liệu thật.
     """
     method = ENVELOPE_METHOD_ALIASES.get(method, method)
-    if method == "hilbert_offline":
-        return 0.0  # filtfilt: zero-phase theo định nghĩa
-
     band = _resolve_band(band)
     fc = (band[0] + band[1]) / 2.0
     nyq = fs / 2.0
@@ -581,9 +498,7 @@ def total_causal_delay_samples(method: str, fs, band=None,
 
     if method == "square_law":
         block_delay = 0.0
-    elif method == "hilbert_fir":
-        block_delay = float((numtaps - 1) // 2)
-    elif method == "hybrid":
+    elif method in ("hybrid", "hilbert_offline"):
         block_delay = 1.0
     else:
         raise ValueError(
@@ -612,12 +527,10 @@ def measure_causal_delay_samples(x, fs, method: str, band=None,
     Quét lag từ 0..max_lag_samples, chọn lag cho tương quan Pearson lớn
     nhất giữa đường bao nhân quả (dịch sớm lên `lag` mẫu) và tham chiếu.
     Cả hai nhánh dùng remove_dc=False (Pearson bất biến với DC, không ảnh
-    hưởng); Square-Law dùng take_sqrt=True để cùng đơn vị [x] với các
-    phương pháp còn lại, tránh lệch hình dạng làm sai lag tìm được.
+    hưởng).
 
     Trả về (best_lag_samples: int, corr_tai_best_lag: float).
     """
-    method = ENVELOPE_METHOD_ALIASES.get(method, method)
     band = _resolve_band(band)
     x = np.asarray(x, dtype=np.float64)
 
@@ -631,10 +544,10 @@ def measure_causal_delay_samples(x, fs, method: str, band=None,
     env_causal = envelope_by_method(
         x, fs, band=band, method=method, lp_cutoff=lp_cutoff,
         bandpass_order=bandpass_order, lowpass_order=lowpass_order,
-        remove_dc=False, take_sqrt=True)
+        remove_dc=False)
     env_ref = hilbert_envelope(
         x, fs, band=band, bandpass_order=bandpass_order, lp_cutoff=lp_cutoff,
-        lowpass_order=lowpass_order, remove_dc=False, zero_phase=True)
+        lowpass_order=lowpass_order, remove_dc=False, zero_phase=False)
 
     a = env_causal[warmup_samples:]
     b = env_ref[warmup_samples:]
@@ -671,6 +584,8 @@ def decimate_envelope(env, fs, factor=ENV_DECIM, lp_cutoff=BENCHMARK_LP_CUTOFF_H
     Trả về (env_decimated, fs_decimated).
     """
     factor = int(factor)
+    if factor < 1:
+        raise ValueError(f"factor phải >= 1, nhận {factor}.")
     fs_out = float(fs) / factor
     if lp_cutoff is not None and lp_cutoff >= fs_out / 2.0:
         raise ValueError(
@@ -682,49 +597,17 @@ def decimate_envelope(env, fs, factor=ENV_DECIM, lp_cutoff=BENCHMARK_LP_CUTOFF_H
     return env[:n:factor], fs_out
 
 
-def envelope_by_method(x, fs, band=None, method="square_law",
+def envelope_by_method(x, fs, band=None, method="hybrid",
                        lp_cutoff=BENCHMARK_LP_CUTOFF_HZ,
                        bandpass_order=BENCHMARK_BANDPASS_ORDER,
                        lowpass_order=BENCHMARK_LOWPASS_ORDER,
-                       take_sqrt=False, **kwargs):
-    """Chọn phương pháp giải điều chế với CÙNG MỘT cấu hình lọc.
-
-    method:
-      - "square_law"      : Square-Law (nhân quả)
-      - "hilbert_fir"     : FIR Hilbert nhân quả  <- baseline benchmark
-      - "hybrid"          : Hybrid sai phân trung tâm + Alpha-Max
-      - "hilbert_offline" : scipy.hilbert + filtfilt — CHỈ vẽ hình/tham
-                            chiếu, không dùng cho bảng kết quả
-
-    "hilbert" là alias của "hilbert_fir" và luôn trỏ tới baseline nhân quả.
-
-    ---------------------------------------------------------------------
-    `take_sqrt` là tham số chung để các notebook có thể truyền cùng cấu hình
-    cho cả ba phương pháp. Nó chỉ có tác dụng với Square-Law.
-
-    Ý nghĩa đúng của cờ này là ĐỒNG NHẤT THỨ NGUYÊN, và chỉ square_law mới
-    lệch thứ nguyên:
-        square_law           -> đường bao mang đơn vị x^2  (cần sqrt)
-        hilbert_fir, hybrid  -> đã là đơn vị của x         (sqrt vô nghĩa)
-        hilbert_offline      -> đã là đơn vị của x (|analytic|)
-    Nên take_sqrt=True CHỈ tác động lên square_law và là KHÔNG-OP với ba
-    nhánh còn lại. Cố ý không raise, để vòng lặp so sánh truyền cùng một bộ
-    tham số cho cả ba phương pháp mà không phải rẽ nhánh if/else.
-
-    Cách chạy đúng thí nghiệm RQ3 (cả 3 cùng đơn vị của x):
-        for m in BENCHMARK_ENVELOPE_METHODS:
-            env = envelope_by_method(x, fs, method=m, take_sqrt=True)
-    """
+                       **kwargs):
+    """Chọn Hybrid hoặc tham chiếu FFT Hilbert với cùng BPF/LPF/DC blocker."""
     method = ENVELOPE_METHOD_ALIASES.get(method, method)
     band = _resolve_band(band)
 
     if method == "square_law":
         return square_law_envelope(
-            x, fs, band=band, lp_cutoff=lp_cutoff,
-            bandpass_order=bandpass_order, lowpass_order=lowpass_order,
-            take_sqrt=take_sqrt, **kwargs)
-    if method == "hilbert_fir":
-        return hilbert_envelope_fir(
             x, fs, band=band, lp_cutoff=lp_cutoff,
             bandpass_order=bandpass_order, lowpass_order=lowpass_order, **kwargs)
     if method == "hybrid":
@@ -738,9 +621,7 @@ def envelope_by_method(x, fs, band=None, method="square_law",
             lp_cutoff=lp_cutoff, lowpass_order=lowpass_order, **kwargs)
 
     raise ValueError(
-        f"method='{method}' không hợp lệ. Chọn một trong "
-        f"{BENCHMARK_ENVELOPE_METHODS} (benchmark) hoặc 'hilbert_offline' "
-        f"(chỉ tham chiếu offline)."
+        f"method='{method}' không hợp lệ. Chọn một trong {BENCHMARK_ENVELOPE_METHODS}."
     )
 
 
