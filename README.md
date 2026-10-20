@@ -239,7 +239,7 @@ Kết luận âm tính (Hybrid/Square-law mất nhiều độ trung thực, ho�
 **Giới hạn khác:**
 - Bộ lọc dùng chung (BPF, LPF) có thể chiếm phần lớn chu kỳ, khiến lợi ích của khối I/Q chỉ là một phần nhỏ của tổng.
 - MLP xử lý theo cửa sổ 2048 mẫu, nên vẫn cần bộ đệm đủ lớn. Lợi thế "theo dòng mẫu" chỉ nằm ở tầng DSP.
-- File Normal được hạ mẫu 48→12 kHz còn file lỗi là gốc 12 kHz; cần kiểm tra ảnh hưởng của resampling, dù mọi pipeline sau đó dùng chung fs 12 kHz.
+- File Normal được hạ mẫu 48 → 12 kHz còn file lỗi là gốc 12 kHz; cần kiểm tra ảnh hưởng của resampling, dù mọi pipeline sau đó dùng chung fs 12 kHz.
 - IIR All-Pass trực giao (độ lệch biên độ phẳng hơn) thuộc hướng phát triển, không nằm trong phạm vi hiện tại.
 
 ## 12. Lộ trình theo cổng
@@ -248,8 +248,7 @@ Kết luận âm tính (Hybrid/Square-law mất nhiều độ trung thực, ho�
 |---|---|---|
 | **1 (PC)** | Khóa cấu hình minimax, kiểm tra Hybrid, Square-law vs FFT Hilbert trên tone và tín hiệu thật; đo độ trung thực đường bao | Đạt tiêu chí đã định trước hoặc ghi nhận kết quả âm tính |
 | **2 (PC)** | MLP 28 đặc trưng, Hybrid, Square-law vs FFT Hilbert; group k-fold theo file, N = 10 seed dùng chung | Hoàn thành metric file-level và phân tích sai số |
-| **3 (MCU, có điều kiện)** | Port pipeline chính sang C, khớp số học PC vs MCU; đo cycles/bộ nhớ nếu có board | Không tuyên bố số đo phần cứng khi chưa đo |
-| *Tùy chọn* | CNN/INT8 | Chỉ làm sau khi các cổng chính hoàn tất; không ảnh hưởng câu hỏi/kết luận chính |
+| **3 (MCU, có điều kiện)** | Port pipeline chính sang C, khớp số học PC vs MCU; đo cycles/bộ nhớ nếu có board |
 
 ## 13. Cấu trúc kho mã (đề xuất, chỉnh theo kho thực tế)
 
