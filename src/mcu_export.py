@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-common/mcu_export.py
+src/mcu_export.py
 ======================
 Chuẩn bị model INT8 để đo tài nguyên thật trên ARM Cortex-M qua STM32Cube.AI.
 """

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-common/io_utils.py
+src/io_utils.py
 ===================
 Đọc file .mat CWRU, dựng bảng manifest, chạy sanity check.
 """

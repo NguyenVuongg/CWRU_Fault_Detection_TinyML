@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-common/splitting.py
+src/splitting.py
 ====================
 File-level split utilities aligned with the README protocol:
 - file_id is the grouping key;

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-common/order.py
+src/order.py
 =================
 [Giai đoạn 1 — mục 1.4, Nhóm B] Biên độ tại hài bậc 1–3 của các tần số mục
 tiêu (f_rot, BPFO, BPFI, BSF, FTF) trên phổ FFT/Order.

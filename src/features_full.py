@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-common/features_full.py
+src/features_full.py
 =========================
 """
 
@@ -198,6 +198,9 @@ def build_full_feature_table(manifest_df, band_hz=dsp.BENCHMARK_BAND_HZ,
 
     rows = []
     file_id_registry: dict[str, str] = {}
+    # Tên chuẩn của phương pháp, ghi vào bảng để ghép/đối chiếu nhiều phương pháp.
+    # Cột này là metadata, KHÔNG phải đặc trưng (nằm trong METADATA_COLUMNS).
+    dsp_method = dsp.ENVELOPE_METHOD_ALIASES.get(envelope_method, envelope_method)
 
     for _, row in manifest_df.iterrows():
         if row.get("label") is None or (isinstance(row.get("label"), float)):
@@ -297,6 +300,7 @@ def build_full_feature_table(manifest_df, band_hz=dsp.BENCHMARK_BAND_HZ,
                 "source_sample_rate_hz": float(resolved_fs),
                 "source_sample_rate_source": str(row.get("resolved_sample_rate_source")),
                 "feature_sample_rate_hz": float(target_fs_hz),
+                "dsp_method": dsp_method,
                 **feats,
             })
 

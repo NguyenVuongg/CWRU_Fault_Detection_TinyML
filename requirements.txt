@@ -8,5 +8,5 @@ tensorflow
 tensorflow-lite
 pyserial
 
-# setup lib - common: pip install -e ".[dl]" --break-system-packages
-# python -c "from common import io_utils" --> rieng tung file
+# setup lib - src: pip install -e ".[dl]" --break-system-packages
+# python -c "from src import io_utils" --> rieng tung file

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-common/features.py
+src/features.py
 ===================
 Trích đặc trưng đơn giản + sliding window.
 """

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-common/config.py
+src/config.py
 =================
 Hằng số và công thức dùng chung cho toàn bộ dự án.
 """

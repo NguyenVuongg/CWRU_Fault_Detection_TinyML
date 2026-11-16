@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-common/synthetic.py
+src/synthetic.py
 =====================
 """
 

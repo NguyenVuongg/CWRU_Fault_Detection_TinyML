@@ -24,4 +24,4 @@ dl = ["tensorflow-cpu>=2.16"]
 dev = ["scipy-stubs>=1.16"]
 
 [tool.setuptools]
-packages = ["common"]
+packages = ["src"]

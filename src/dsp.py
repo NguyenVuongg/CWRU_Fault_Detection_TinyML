@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-common/dsp.py
+src/dsp.py
 =============
 Lọc, giải điều chế đường bao (Envelope Demodulation) và FFT dùng chung.
 
@@ -13,11 +13,18 @@ mục tiêu của đề tài là chi phí/hiệu năng TRÊN MCU chạy realtime
 QUY ƯỚC BENCHMARK:
     - Mặc định mọi bộ lọc trong module này là NHÂN QUẢ (sosfilt).
     zero_phase=True chỉ dành cho minh họa/vẽ phổ offline.
-  - hilbert_envelope() (scipy, phi nhân quả) giữ lại CHỈ để tham chiếu
-    offline / vẽ hình — KHÔNG đưa vào bảng RQ2/RQ3.
-    - Phương pháp benchmark và tham chiếu offline dùng CHUNG:
-    bandpass_order, lp_cutoff, lowpass_order và cách khử DC. Xem các hằng
-    BENCHMARK_* và envelope_by_method() — dispatcher DUY NHẤT.
+    - FFT-Hilbert là MỘT phương pháp, có HAI cách triển khai:
+        * "hilbert_offline": FFT toàn file (scipy.signal.hilbert) — THAM CHIẾU
+          trên PC. Không triển khai được trên MCU. Dùng làm chuẩn so sánh
+          độ trung thực (RQ2); không đưa vào bảng chi phí MCU.
+        * "hilbert_block" (alias "hilbert_mcu"): FFT theo khối không chồng lấp
+          (mặc định 2048 mẫu), mô phỏng đúng bản triển khai trên MCU. Đây là
+          bản dùng để đo chi phí phần cứng (RQ1) và đo chất lượng so với
+          Hybrid (RQ2). Sai khác của nó so với "hilbert_offline" chỉ đến từ
+          hiệu ứng mép khối (xem hilbert_block_envelope()).
+    - Mọi phương pháp dùng CHUNG: bandpass_order, lp_cutoff, lowpass_order và
+    cách khử DC. Xem các hằng BENCHMARK_* và envelope_by_method() —
+    dispatcher DUY NHẤT.
 """
 
 import numpy as np
@@ -26,13 +33,27 @@ from scipy.signal import butter, filtfilt, group_delay, hilbert, lfilter, sos2tf
 from .config import ENV_DECIM, LP_CUTOFF_HZ, RESONANCE_BAND_HZ
 
 # ---------------------------------------------------------------------------
-# Cấu hình dùng CHUNG cho cả 2 phương pháp benchmark (RQ2/RQ3).
+# Cấu hình dùng CHUNG cho các phương pháp benchmark (RQ2/RQ3).
 # Đổi ở ĐÂY, không hardcode rải rác trong từng hàm/notebook.
 # ---------------------------------------------------------------------------
 BENCHMARK_BANDPASS_ORDER = 4
 BENCHMARK_LOWPASS_ORDER = 2
 BENCHMARK_LP_CUTOFF_HZ = float(LP_CUTOFF_HZ)  # nguồn duy nhất: config.LP_CUTOFF_HZ
 BENCHMARK_BAND_HZ = tuple(float(v) for v in RESONANCE_BAND_HZ)  # config.RESONANCE_BAND_HZ
+
+# ---------------------------------------------------------------------------
+# TÊN PHƯƠNG PHÁP: alias -> tên chuẩn
+# ---------------------------------------------------------------------------
+# Tên gọi cũ/viết tắt -> tên phương pháp chuẩn dùng trong benchmark.
+# Giữ ở ĐÂY để mọi dispatcher cùng tra một bảng. Thêm/bớt alias tại đây.
+# (Để dict rỗng {} nếu không muốn hỗ trợ tên viết tắt.)
+ENVELOPE_METHOD_ALIASES = {
+    "hilbert": "hilbert_offline",
+    "hilbert_mcu": "hilbert_block",
+}
+
+# Kích thước khối FFT của bản Hilbert triển khai trên MCU (= cửa sổ đặc trưng).
+HILBERT_BLOCK_SIZE = 2048
 
 # ---------------------------------------------------------------------------
 # HỆ SỐ ALPHA-MAX PLUS BETA-MIN
@@ -159,18 +180,43 @@ SHARED_STAGE_COST = {
     "lowpass_biquads": 1, "lowpass_mults_per_sample": 5, "lowpass_adds_per_sample": 4,
 }
 
-ENVELOPE_MCU_COST = {
-    "square_law": {
-        "mults_per_sample": 1,
-        "adds_per_sample": 0,
-        "sqrt_per_sample": 0,
-        "state_words": 0,
-        "extra_latency_samples": 0,
+def hilbert_block_cost_estimate(block_size: int = HILBERT_BLOCK_SIZE) -> dict:
+    """Ước lượng GIẢI TÍCH cận trên chi phí khối Hilbert theo khối (FFT radix-2).
+
+    Quy trình trên MCU cho MỖI khối N mẫu thực:
+        FFT thuận N điểm  -> mặt nạ giải tích (nhân 2 nửa dương, xóa nửa âm)
+        -> IFFT phức N điểm -> |.| = sqrt(re^2 + im^2) cho từng mẫu.
+    FFT phức N điểm radix-2: (N/2)*log2(N) bướm, mỗi bướm 4 nhân + 6 cộng thực.
+    Thư viện CMSIS-DSP dùng radix-4/8 và rFFT nên con số thật THẤP hơn; đây là
+    cận trên để định hướng, KHÔNG thay thế số đo DWT->CYCCNT.
+    """
+    n = int(block_size)
+    if n < 4 or n & (n - 1):
+        raise ValueError(f"block_size phải là lũy thừa của 2 và >= 4, nhận {n}.")
+    stages = int(np.log2(n))
+    butterflies = (n // 2) * stages
+    fft_mults, fft_adds = 4 * butterflies, 6 * butterflies
+    mag_mults, mag_adds = 2 * n, n                  # re^2 + im^2
+    mults = 2 * fft_mults + mag_mults                # FFT thuận + IFFT
+    adds = 2 * fft_adds + mag_adds
+    return {
+        "mults_per_sample": mults / n,
+        "adds_per_sample": adds / n,
+        "sqrt_per_sample": 1,
+        "state_words": 3 * n,                        # vào N + phổ phức 2N (cận trên)
+        "extra_latency_samples": n,                  # phải gom đủ 1 khối; bị che bởi cửa sổ đặc trưng
+        "block_size": n,
+        "is_estimate": True,
         "note": (
-            "Bình phương tín hiệu sau bandpass rồi lowpass để lấy đường bao. "
-            "Đường bao mang đơn vị bình phương của tín hiệu."
+            f"Ước lượng cận trên, FFT radix-2, N={n}. Gồm 1 FFT thuận + 1 IFFT "
+            "phức + sqrt mỗi mẫu. Cần bảng twiddle trong Flash. Số thật phải "
+            "đo bằng DWT->CYCCNT (CMSIS-DSP). Trễ khối N mẫu không làm tăng "
+            "trễ chẩn đoán vì cửa sổ đặc trưng cũng dài N."
         ),
-    },
+    }
+
+
+ENVELOPE_MCU_COST = {
     "hybrid": {
         "mults_per_sample": 3,        # 1 chuẩn hóa Q + 2 hệ số alpha/beta
         "adds_per_sample": 2,         # 1 trừ (sai phân) + 1 cộng (alpha-max)
@@ -192,11 +238,12 @@ ENVELOPE_MCU_COST = {
         "state_words": None,
         "extra_latency_samples": 0,
         "note": (
-            "KHÔNG TRIỂN KHAI ĐƯỢC trên MCU realtime: scipy.signal.hilbert đòi "
-            "FFT/IFFT N điểm trên toàn khối và filtfilt chạy ngược thời gian. "
-            "Chỉ dùng làm tham chiếu offline — không đưa vào bảng RQ2/RQ3."
+            "THAM CHIẾU TRÊN PC, không triển khai trên MCU: FFT/IFFT trên "
+            "TOÀN file. Dùng làm chuẩn độ trung thực; chi phí MCU lấy từ "
+            "'hilbert_block'."
         ),
     },
+    "hilbert_block": hilbert_block_cost_estimate(HILBERT_BLOCK_SIZE),
 }
 
 
@@ -280,27 +327,7 @@ def _finish_envelope(env_raw, fs, lp_cutoff, lowpass_order, remove_dc,
 
 
 # ===========================================================================
-# 1. SQUARE-LAW (baseline)
-# ===========================================================================
-def square_law_envelope(x, fs, band=None, lp_cutoff=BENCHMARK_LP_CUTOFF_HZ,
-                        bandpass_order=BENCHMARK_BANDPASS_ORDER,
-                        lowpass_order=BENCHMARK_LOWPASS_ORDER,
-                        remove_dc=True, order=None, dc_blocker_pole=0.995):
-    """Đường bao Square-Law: bình phương tín hiệu đã bandpass rồi lowpass."""
-    if order is not None:
-        bandpass_order = order
-    band = _resolve_band(band)
-
-    x_bp = bandpass_filter(x, fs, band[0], band[1], order=bandpass_order,
-                           zero_phase=False)
-    x_squared = x_bp ** 2
-    return _finish_envelope(
-        x_squared, fs, lp_cutoff, lowpass_order, remove_dc, dc_blocker_pole
-    )
-
-
-# ===========================================================================
-# 2. HILBERT
+# 1. HILBERT
 # ===========================================================================
 def hilbert_envelope(x, fs, band=None, bandpass_order=BENCHMARK_BANDPASS_ORDER,
                      lp_cutoff=BENCHMARK_LP_CUTOFF_HZ,
@@ -334,8 +361,104 @@ def hilbert_envelope(x, fs, band=None, bandpass_order=BENCHMARK_BANDPASS_ORDER,
     )
 
 
+def _analytic_mask(n: int, dtype) -> np.ndarray:
+    """Mặt nạ tín hiệu giải tích: giữ DC/Nyquist, nhân 2 nửa dương, xóa nửa âm.
+    Giống hệt scipy.signal.hilbert; bản C dùng cùng quy tắc này."""
+    h = np.zeros(n, dtype=dtype)
+    h[0] = 1.0
+    if n % 2 == 0:
+        h[n // 2] = 1.0
+        h[1:n // 2] = 2.0
+    else:
+        h[1:(n + 1) // 2] = 2.0
+    return h
+
+
+def _hilbert_magnitude_blocks(x, block_size, float32=False):
+    """Tính |tín hiệu giải tích| trên các block FFT CỐ ĐỊNH, không chồng lấp.
+
+    Mọi block đều được FFT đúng block_size mẫu. Block cuối nếu thiếu mẫu sẽ
+    được zero-padding đến block_size; đầu ra chỉ giữ lại số mẫu thật của block.
+    Quy tắc này phù hợp với mô phỏng MCU dùng một kích thước FFT cố định.
+    """
+    from scipy import fft as sp_fft
+
+    block_size = int(block_size)
+    if block_size < 8:
+        raise ValueError(f"block_size phải >= 8, nhận {block_size}.")
+
+    dtype = np.float32 if float32 else np.float64
+    x = np.asarray(x, dtype=dtype).reshape(-1)
+    n = x.size
+    if n == 0:
+        return np.empty(0, dtype=np.float64)
+
+    out = np.empty(n, dtype=np.float64)
+    analytic_mask = _analytic_mask(block_size, dtype)
+
+    for start in range(0, n, block_size):
+        stop = min(start + block_size, n)
+        valid = stop - start
+
+        # MCU luôn xử lý FFT block_size mẫu; block cuối được đệm 0.
+        block = np.zeros(block_size, dtype=dtype)
+        block[:valid] = x[start:stop]
+
+        spectrum = np.asarray(sp_fft.fft(block, n=block_size), dtype=np.complex64 if float32 else np.complex128)
+        analytic_spectrum = spectrum * analytic_mask
+        analytic_signal = np.asarray(
+            sp_fft.ifft(analytic_spectrum, n=block_size),
+            dtype=np.complex64 if float32 else np.complex128,
+        )
+
+        # Không giữ các mẫu thuộc phần zero-padding của block cuối.
+        out[start:stop] = np.abs(analytic_signal[:valid]).astype(np.float64, copy=False)
+
+    return out
+
+
+def hilbert_block_envelope(x, fs, band=None, bandpass_order=BENCHMARK_BANDPASS_ORDER,
+                           lp_cutoff=BENCHMARK_LP_CUTOFF_HZ,
+                           lowpass_order=BENCHMARK_LOWPASS_ORDER,
+                           remove_dc=True, dc_blocker_pole=0.995,
+                           align_delay=True, block_size=HILBERT_BLOCK_SIZE,
+                           float32=False):
+    """FFT-Hilbert THEO KHỐI — bản mô phỏng đúng cách triển khai trên MCU.
+
+    Chuỗi xử lý (khớp bản C):
+        BPF nhân quả (luồng) -> gom khối N mẫu -> FFT -> mặt nạ giải tích
+        -> IFFT phức -> |.| -> LPF nhân quả (luồng, trạng thái liên tục qua
+        các khối) -> DC blocker -> (giảm mẫu do hàm gọi thực hiện).
+
+    Khác với hilbert_envelope() (FFT trên TOÀN file), FFT chạy độc lập trên
+    từng khối N mẫu không chồng lấp. Block cuối thiếu mẫu được zero-padding
+    đến N và chỉ giữ lại phần đầu ra ứng với mẫu thật. Phần mở rộng tuần hoàn
+    ngầm của FFT gây méo cục bộ ở hai đầu mỗi block; đây là hiệu ứng cần giữ
+    lại và đánh giá, không crop hoặc làm mượt để che đi.
+
+    float32=True: khối FFT/IFFT tính bằng float32 (như MCU). BPF/LPF/DC
+    blocker vẫn float64 trong mô phỏng này.
+    align_delay: trễ 1 mẫu như hilbert_envelope() để các phương pháp thẳng hàng
+    với Hybrid trong bảng đặc trưng; benchmark dạng sóng truyền False.
+    """
+    block_size = int(block_size)
+    if block_size < 8:
+        raise ValueError(f"block_size phải >= 8, nhận {block_size}.")
+    band = _resolve_band(band)
+    filtered = bandpass_filter(x, fs, band[0], band[1], order=bandpass_order,
+                               zero_phase=False)
+    env = _hilbert_magnitude_blocks(filtered, block_size, float32=float32)
+    if align_delay and len(env):
+        aligned = np.zeros_like(env)
+        aligned[1:] = env[:-1]
+        env = aligned
+    return _finish_envelope(
+        env, fs, lp_cutoff, lowpass_order, remove_dc, dc_blocker_pole
+    )
+
+
 # ===========================================================================
-# 3. HYBRID (đóng góp của đề tài)
+# 2. HYBRID (đóng góp của đề tài)
 # ===========================================================================
 def hybrid_envelope(x, fs, band=None, bandpass_order=BENCHMARK_BANDPASS_ORDER,
                     alpha=ALPHA_MAX_MINMAX, beta=BETA_MIN_MINMAX,
@@ -415,16 +538,12 @@ def hybrid_envelope(x, fs, band=None, bandpass_order=BENCHMARK_BANDPASS_ORDER,
 # ===========================================================================
 # DISPATCHER DUY NHẤT cho RQ2/RQ3
 # ===========================================================================
-BENCHMARK_ENVELOPE_METHODS = ("square_law", "hybrid", "hilbert_offline")
-ENVELOPE_METHOD_ALIASES = {
-    "squarelaw": "square_law",
-    "square-law": "square_law",
-}
+BENCHMARK_ENVELOPE_METHODS = ("hybrid", "hilbert_offline", "hilbert_block")
 
 ENVELOPE_GROUP_DELAY_SAMPLES = {
-    "square_law": 0,
     "hybrid": 1,                                          # sai phân trung tâm
     "hilbert_offline": 1,                                 # trễ nhân tạo để căn với Hybrid
+    "hilbert_block": 1,                                   # như trên (không tính trễ gom khối)
 }
 
 
@@ -496,14 +615,12 @@ def total_causal_delay_samples(method: str, fs, band=None,
                     btype="bandpass", output="sos")
     bp_delay = _iir_group_delay_samples(sos_bp, fc, fs)
 
-    if method == "square_law":
-        block_delay = 0.0
-    elif method in ("hybrid", "hilbert_offline"):
-        block_delay = 1.0
+    if method in BENCHMARK_ENVELOPE_METHODS:
+        block_delay = 1.0           # trễ gom khối N mẫu của hilbert_block KHÔNG tính ở đây
     else:
         raise ValueError(
             f"method='{method}' không hợp lệ. Chọn một trong "
-            f"{BENCHMARK_ENVELOPE_METHODS} hoặc 'hilbert_offline'."
+            f"{BENCHMARK_ENVELOPE_METHODS}."
         )
 
     sos_lp = butter(lowpass_order, lp_cutoff / nyq, btype="lowpass", output="sos")
@@ -602,14 +719,11 @@ def envelope_by_method(x, fs, band=None, method="hybrid",
                        bandpass_order=BENCHMARK_BANDPASS_ORDER,
                        lowpass_order=BENCHMARK_LOWPASS_ORDER,
                        **kwargs):
-    """Chọn Hybrid hoặc tham chiếu FFT Hilbert với cùng BPF/LPF/DC blocker."""
-    method = ENVELOPE_METHOD_ALIASES.get(method, method)
+    """Chọn Hybrid, FFT-Hilbert toàn file (tham chiếu) hoặc FFT-Hilbert theo khối
+    (bản MCU), cùng BPF/LPF/DC blocker."""
     band = _resolve_band(band)
+    method = ENVELOPE_METHOD_ALIASES.get(method, method)
 
-    if method == "square_law":
-        return square_law_envelope(
-            x, fs, band=band, lp_cutoff=lp_cutoff,
-            bandpass_order=bandpass_order, lowpass_order=lowpass_order, **kwargs)
     if method == "hybrid":
         return hybrid_envelope(
             x, fs, band=band, lp_cutoff=lp_cutoff,
@@ -617,6 +731,10 @@ def envelope_by_method(x, fs, band=None, method="hybrid",
     if method == "hilbert_offline":
         # Dùng cùng cấu hình lọc với các nhánh còn lại.
         return hilbert_envelope(
+            x, fs, band=band, bandpass_order=bandpass_order,
+            lp_cutoff=lp_cutoff, lowpass_order=lowpass_order, **kwargs)
+    if method == "hilbert_block":
+        return hilbert_block_envelope(
             x, fs, band=band, bandpass_order=bandpass_order,
             lp_cutoff=lp_cutoff, lowpass_order=lowpass_order, **kwargs)
 

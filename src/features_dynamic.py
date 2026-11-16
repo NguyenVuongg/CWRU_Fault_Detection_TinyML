@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-common/features_dynamic.py
+src/features_dynamic.py
 =========================
 Trích xuất đặc trưng động dựa trên band_hz cố định và các phương pháp
 giải điều chế benchmark.
@@ -67,6 +67,7 @@ def extract_features_dynamic_from_signals(signals_series, band_hz, fs=12000,
             f"window_size và stride phải chia hết cho ENV_DECIM={dsp.ENV_DECIM}."
         )
     envelope_kwargs = dict(envelope_kwargs or {})
+    dsp_method = dsp.ENVELOPE_METHOD_ALIASES.get(method, method)
 
     rows = []
     n_skipped = 0
@@ -102,7 +103,7 @@ def extract_features_dynamic_from_signals(signals_series, band_hz, fs=12000,
                 env_window, fs=env_fs, rpm=current_rpm))
             
             rows.append({"signal_idx": signal_idx, "window_idx": i,
-                         "start_idx": s0, **feats})
+                         "start_idx": s0, "dsp_method": dsp_method, **feats})
 
     if n_skipped:
         print(f"[CẢNH BÁO] Bỏ qua {n_skipped}/{n_signals} tín hiệu do quá ngắn hoặc rơi vào vùng warmup.")

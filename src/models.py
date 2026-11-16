@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-common/models.py
+src/models.py
 ================
 MLP 28 đặc trưng cho dự án (đã gỡ toàn bộ CNN 1D).
 
@@ -239,3 +239,285 @@ def bootstrap_ci_by_file(y_true, y_pred, file_ids, *, metric: str = "f1_macro",
     return {"point_estimate": float(_metric(ft, fp, metric)),
             "ci_lo": float(lo), "ci_hi": float(hi),
             "n_files": n_files, "n_boot": n_boot}
+    
+    
+
+
+def export_for_stm32cubeai(
+    model: Model,
+    output_dir: str,
+    feature_cols: list,
+    norm_mean=None,
+    norm_variance=None,
+    class_names=None,
+    model_name: str = "bearing_mlp",
+):
+    """
+    Export TensorFlow/Keras MLP sang HDF5 cho STM32Cube.AI.
+
+    Xuất:
+        - bearing_mlp.h5
+        - normalization_stats.npz
+        - metadata.json
+
+    Có kiểm tra lại mô hình sau khi lưu.
+    """
+
+    import json
+    from pathlib import Path
+
+    # ============================================================
+    # 1. KIỂM TRA MODEL
+    # ============================================================
+
+    if (norm_mean is None) != (norm_variance is None):
+        raise ValueError(
+            "norm_mean và norm_variance phải được truyền cùng nhau."
+        )
+
+    input_dim_value = model.input_shape[-1]
+    output_dim_value = model.output_shape[-1]
+
+    if input_dim_value is None or output_dim_value is None:
+        raise ValueError("Input/output dimension không xác định.")
+
+    input_dim = int(input_dim_value)
+    n_classes = int(output_dim_value)
+
+    feature_cols = [str(c) for c in feature_cols]
+
+    if len(feature_cols) != input_dim:
+        raise ValueError(
+            f"Số feature = {len(feature_cols)}, "
+            f"nhưng model cần {input_dim}."
+        )
+
+    # ============================================================
+    # 2. XÁC ĐỊNH CLASS
+    # ============================================================
+
+    if class_names is None:
+        if n_classes == N_CLASSES_4:
+            class_names = CLASSES_4
+        elif n_classes == N_CLASSES_10:
+            class_names = CLASSES_10
+        else:
+            class_names = [
+                f"class_{i}" for i in range(n_classes)
+            ]
+
+    class_names = [str(c) for c in class_names]
+
+    if len(class_names) != n_classes:
+        raise ValueError("Số class không khớp output model.")
+
+    # ============================================================
+    # 3. CHUẨN BỊ THÔNG SỐ Z-SCORE
+    # ============================================================
+
+    mean_arr: np.ndarray | None = None
+    var_arr: np.ndarray | None = None
+
+    if norm_mean is not None and norm_variance is not None:
+
+        mean_arr = np.asarray(
+            norm_mean, dtype=np.float32
+        ).reshape(-1)
+
+        var_arr = np.asarray(
+            norm_variance, dtype=np.float32
+        ).reshape(-1)
+
+        if len(mean_arr) != input_dim or len(var_arr) != input_dim:
+            raise ValueError("Kích thước Z-score không hợp lệ.")
+
+        if (
+            not np.all(np.isfinite(mean_arr))
+            or not np.all(np.isfinite(var_arr))
+            or np.any(var_arr <= 0)
+        ):
+            raise ValueError("Mean/variance không hợp lệ.")
+
+    # Kiểm tra Normalization layer bên trong model
+    has_embedded_norm = any(
+        isinstance(
+            layer,
+            tf.keras.layers.Normalization
+        )
+        for layer in model.layers
+    )
+
+    if has_embedded_norm:
+        norm_mode = "embedded_in_model"
+    elif mean_arr is not None and var_arr is not None:
+        norm_mode = "external_zscore"
+    else:
+        norm_mode = "not_recorded"
+
+    # ============================================================
+    # 4. TẠO THƯ MỤC EXPORT
+    # ============================================================
+
+    export_dir = Path(output_dir)
+    export_dir.mkdir(parents=True, exist_ok=True)
+
+    model_name = Path(model_name).stem
+
+    model_path = export_dir / f"{model_name}.h5"
+
+    # ============================================================
+    # 5. EXPORT MODEL HDF5
+    # ============================================================
+
+    # Không sử dụng include_optimizer=False ở đây:
+    # Tham số này không có trong type signature của Keras hiện tại.
+    model.save(str(model_path))
+
+    print(f"[EXPORT] Model saved: {model_path}")
+
+    # ============================================================
+    # 6. EXPORT THÔNG SỐ Z-SCORE
+    # ============================================================
+
+    scaler_file = None
+
+    # Kiểm tra CẢ HAI biến để Pylance nhận diện đúng kiểu dữ liệu.
+    if mean_arr is not None and var_arr is not None:
+
+        scaler_path = export_dir / "normalization_stats.npz"
+
+        mean_values = np.asarray(mean_arr, dtype=np.float32)
+        variance_values = np.asarray(var_arr, dtype=np.float32)
+
+        std_values = np.sqrt(variance_values)
+
+        np.savez_compressed(
+            str(scaler_path),
+            mean=mean_values,
+            variance=variance_values,
+            std=std_values,
+        )
+
+        scaler_file = scaler_path.name
+
+        print(f"[EXPORT] Normalization saved: {scaler_path}")
+
+    # ============================================================
+    # 7. EXPORT METADATA JSON
+    # ============================================================
+
+    metadata = {
+        "model_name": model_name,
+        "format": "Keras HDF5",
+
+        "input_dim": input_dim,
+        "output_dim": n_classes,
+
+        "input_shape": [None, input_dim],
+        "output_shape": [None, n_classes],
+
+        "architecture": "MLP_28_32_16_N",
+        "parameters": int(model.count_params()),
+
+        "feature_names": feature_cols,
+        "class_names": class_names,
+
+        "output_activation": "softmax",
+        "prediction_method": "argmax",
+
+        "normalization": {
+            "mode": norm_mode,
+            "formula": "(x - mean) / sqrt(variance)",
+
+            "mean": (
+                mean_arr.tolist()
+                if mean_arr is not None else None
+            ),
+
+            "variance": (
+                var_arr.tolist()
+                if var_arr is not None else None
+            ),
+
+            "scaler_file": scaler_file,
+
+            "apply_externally": (
+                norm_mode == "external_zscore"
+            ),
+        },
+    }
+
+    metadata_path = export_dir / "metadata.json"
+
+    with open(metadata_path, "w", encoding="utf-8") as f:
+        json.dump(
+            metadata,
+            f,
+            indent=4,
+            ensure_ascii=False,
+        )
+
+    print(f"[EXPORT] Metadata saved: {metadata_path}")
+
+    # ============================================================
+    # 8. KIỂM TRA MODEL SAU KHI EXPORT
+    # ============================================================
+
+    loaded_model = tf.keras.models.load_model(
+        str(model_path),
+        compile=False,
+    )
+
+    dummy_input = np.zeros(
+        (2, input_dim),
+        dtype=np.float32,
+    )
+
+    # Sử dụng predict() thay vì gọi model(...)
+    # để tránh lỗi overload của Pylance.
+    pred_original = np.asarray(
+        model.predict(dummy_input, verbose=0),
+        dtype=np.float32,
+    )
+
+    pred_loaded = np.asarray(
+        loaded_model.predict(dummy_input, verbose=0),
+        dtype=np.float32,
+    )
+
+    if not np.allclose(
+        pred_original,
+        pred_loaded,
+        rtol=1e-5,
+        atol=1e-6,
+    ):
+        raise RuntimeError(
+            "Model sau khi load không khớp model ban đầu!"
+        )
+
+    print("[EXPORT] Model verification: PASSED")
+
+    # ============================================================
+    # 9. HIỂN THỊ KẾT QUẢ
+    # ============================================================
+
+    print("\n" + "=" * 55)
+    print("          STM32Cube.AI MODEL EXPORT")
+    print("=" * 55)
+
+    print(f"Model       : {model_path}")
+    print(f"Input       : {input_dim}")
+    print(f"Output      : {n_classes}")
+    print(f"Parameters  : {model.count_params()}")
+    print(f"Normalization: {norm_mode}")
+
+    print("-" * 55)
+    print("Verification: PASSED")
+    print("Export      : SUCCESS")
+    print("=" * 55)
+
+    return {
+        "model_path": str(model_path),
+        "metadata_path": str(metadata_path),
+        "scaler_file": scaler_file,
+    }

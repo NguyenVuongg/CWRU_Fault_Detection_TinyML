@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-common/pipeline.py
+src/pipeline.py
 ====================
 """
 

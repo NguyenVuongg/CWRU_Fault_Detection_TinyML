@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-common/quantization.py
+src/quantization.py
 =====================
 Giai đoạn 2
 Post-training full-integer quantization: Float32 -> INT8 bằng TensorFlow Lite.
