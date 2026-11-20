@@ -382,14 +382,14 @@ Nhánh sửa giữ preprocessing khớp với training: scaler fit trên train f
 
 | Mức | Phiên bản | Accuracy | Macro-F1 |
 |---|---|---:|---:|
-| File | Keras Float32 | 91,50% ± 2,42% | 91,15% ± 2,89% |
-| File | TFLite Float32 | 91,50% ± 2,42% | 91,15% ± 2,89% |
-| File | TFLite INT8 | 92,00% ± 2,58% | 91,81% ± 2,85% |
-| Window | Keras Float32 | 90,41% ± 1,59% | 89,59% ± 1,69% |
-| Window | TFLite Float32 | 90,41% ± 1,59% | 89,59% ± 1,69% |
-| Window | TFLite INT8 | 90,41% ± 1,54% | 89,55% ± 1,58% |
+| File | Keras Float32 | 91,75% ± 2,90% | 91,37% ± 3,43% |
+| File | TFLite Float32 | 91,75% ± 2,90% | 91,37% ± 3,43% |
+| File | TFLite INT8 | 91,75% ± 2,90% | 91,37% ± 3,43% |
+| Window | Keras Float32 | 90,42% ± 1,76% | 89,54% ± 2,02% |
+| Window | TFLite Float32 | 90,42% ± 1,76% | 89,54% ± 2,02% |
+| Window | TFLite INT8 | 90,39% ± 1,73% | 89,45% ± 1,97% |
 
-TFLite Float32 khớp Keras trên test folds (max probability error quan sát `6.71e-7`). INT8 có top-1 agreement trung bình theo fold `99.37%`, MAE xác suất OOF `0.00376`, P95 `0.01525`, max `0.89658`. Max error xảy ra ở một window IR mà Keras dự đoán sai `B`, còn INT8 dự đoán đúng `IR`; vì vậy cần xem sai số xác suất cùng nhãn/dự đoán, không chỉ nhìn max.
+Các số trong bảng là mean ± SD qua 10 seed, lấy từ `int8_revised_evaluation/metrics_by_seed.csv`. TFLite Float32 giữ cùng accuracy và Macro-F1 với Keras ở các fold; sai số xác suất lớn nhất trong chẩn đoán fold là `2.62e-6`. INT8 có top-1 agreement trung bình `99.27%` qua 40 fold; MAE trung bình theo fold `0.00384`, P95 trung bình theo fold `0.01568`. Sai số xác suất lớn nhất theo từng window là `0.89658`, ở file `169_0`, seed 42/fold 1/window 4: Keras dự đoán sai `B`, INT8 dự đoán `IR` đúng.
 
 Input final INT8 có shape `[1, 28]`, dtype int8, scale `0.0468812`, zero-point `-58`; output `[1, 4]`, thứ tự `Normal, IR, OR, B`. Flatbuffer final là **4.504 bytes**. Qua các fold, tỷ lệ saturation input trung bình `0.095%`, nhưng lớn nhất `6.15%` ở `envelope_BSF_h2` và `5.79%` ở `time_mean` trên một số fold held-out. Đây là điểm cần tiếp tục theo dõi, dù metric tổng thể gần Float32.
 
