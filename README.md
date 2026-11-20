@@ -8,7 +8,7 @@
 | **Nền tảng** | STM32F4 (Cortex-M4F). Part number, xung nhịp, toolchain: `[TBD]` |
 | **Phương án so sánh** | **Hybrid**, tham chiếu FFT Hilbert toàn file trên PC, và FFT Hilbert theo block 2048 mẫu mô phỏng bằng Python (gọi tắt **Hilbert Block**; chưa phải firmware MCU) |
 | **Mô hình chính** | MLP trên 28 đặc trưng thủ công |
-| **Trạng thái** | Notebook 06 đã chạy đủ 40/40 file, 0 lỗi; notebook MLP đã đánh giá 3 phương pháp trên cùng 10 seed. Kết quả PC được tóm tắt ở mục 9. Hilbert Block hiện chỉ là mô phỏng Python; **chưa có firmware hoặc số đo MCU**. |
+| **Trạng thái** | Notebook DSP 06 đã chạy đủ 40/40 file; MLP đã đánh giá 3 phương pháp trên cùng 10 seed. Nhánh INT8 đã được sửa và đánh giá file/window-level trên PC; báo cáo ở `reports/INT8_FIX_REPORT.md`. Hilbert Block vẫn là mô phỏng Python; **chưa có firmware hoặc số đo STM32F4**. |
 
 ---
 
@@ -185,11 +185,17 @@ Manifest chuẩn được tạo từ dữ liệu gốc, lọc theo scope, gắn 
 
 **Giới hạn đã biết của giao thức:** cùng một vòng bi hỏng xuất hiện ở cả 4 mức tải, nên file Test luôn có file "cùng lỗi, khác tải" nằm trong Train. Kết quả chỉ nói về file chưa thấy trong cùng mẫu vật với tải gộp chung, và **không tuyên bố tổng quát hóa qua tải hay qua vòng bi/máy khác**. Notebook đã có một phép khảo sát AWGN theo SNR (mục 9); không suy rộng từ đó thành kiểm định robustness phổ quát.
 
-## 7. Mô hình
+## 7. Mô hình và export
 
-| Mô hình | Đầu vào | Ghi chú |
+| Phần | Mục đích | Protocol / artifact |
 |---|---|---|
-| **MLP** | 28 đặc trưng: 11 Time + 10 Order + 7 Envelope; `28 → 32 → 16 → 4` | Z-score fit trên Train; 40 epoch, không Val/early stopping. Nhóm Order cần RPM |
+| **Cell 5 — Huấn luyện/đánh giá theo fold** | So sánh MLP cho Hybrid, Hilbert offline và Hilbert Block | MLP học từ feature theo window; metric chính được gộp theo `file_id`. Mỗi fold giữ toàn bộ file test tách khỏi train. |
+| **Cell export — mô hình triển khai** | Chọn phương pháp theo Macro-F1 CV, fit lại scaler và MLP cuối trên toàn bộ feature table, sau đó export | Kiến trúc `28 → 32 → 16 → 4`, 40 epoch. Đây là final fit sau CV, không phải một model fold/test riêng. Artifact INT8 mới nhận 28 feature đã chuẩn hóa. |
+| **Cell P0 INT8 — đánh giá lượng tử hóa** | Đánh giá Keras Float32, TFLite Float32 và TFLite INT8 | Chạy lại riêng nhánh Hybrid qua cùng file folds; báo cáo cả file-level và window-level. Representative calibration chỉ dùng train files của fold. Cell này không phải cell export final model. |
+
+Trong `summary.csv` hiện tại, ba phương pháp có cùng điểm CV; chọn bằng sort ổn định nên phương pháp đầu tiên là `hybrid`. Vì vậy final artifact hiện tại dùng 28 feature Hybrid. Notebook cũ và artifact legacy được giữ để đối chiếu; nhánh sửa lưu riêng tại `model_export_int8_revised/`.
+
+MLP hiện là classifier tham chiếu cố định để so sánh DSP và tài nguyên. Không đổi kiến trúc giữa các phương pháp DSP trong cùng một benchmark.
 
 ## 8. Bộ chỉ số benchmark chính thức
 
@@ -286,6 +292,13 @@ Notebook đọc ba bảng feature `features_mlp_hybrid`, `features_mlp_hilbert` 
 | `noise_summary.csv`, `noise_paired_deltas.csv`, `noise_predictions_file_level.csv` | Kết quả AWGN theo SNR |
 | `ablation_summary.csv`, `ablation_deltas.csv` | Ablation nhóm Time / Order / Envelope |
 | `run_config.json` | Cấu hình chạy và tham số đánh giá |
+| `int8_revised_evaluation/metrics_by_seed.csv` | Keras/TFLite Float32/TFLite INT8; metric theo file và window, từng seed |
+| `int8_revised_evaluation/file_predictions.csv`, `window_predictions.csv` | Dự đoán và xác suất theo từng file/window, seed và fold |
+| `int8_revised_evaluation/confusion_by_seed.csv` | Confusion matrix theo file/window và từng phiên bản |
+| `int8_revised_evaluation/quantization_diagnostics.csv` | Sai số xác suất, input quantization, saturation/clipping theo feature/fold |
+| `int8_revised_evaluation/model_sizes.csv`, `file_bootstrap_ci_clustered.csv` | Kích thước flatbuffer theo fold và CI bootstrap theo cụm file |
+| `int8_revised_evaluation/confusion_matrices_int8_comparison.png` | Hình confusion matrix chuẩn hóa, lưu bởi cell plot sau cell P0 |
+| `model_export_int8_revised/` | TFLite INT8 standardized-input, scaler, metadata và representative samples |
 
 Các bảng kết quả notebook được lưu cùng notebook; các CSV ở trên được tạo khi chạy notebook.
 
@@ -359,6 +372,29 @@ Bỏ Energy nếu không có số đo. Ghi riêng cấu hình lọc dùng chung 
 | Tải (HP) | 2 | 10 | 0,9997 ± 0,0002 | 0,0285 ± 0,0042 |
 | Tải (HP) | 3 | 10 | 0,9998 ± 0,0002 | 0,0282 ± 0,0045 |
 
+### 9.1. Kết quả sửa INT8 trên PC
+
+Nhánh cũ fuse StandardScaler vào Dense đầu tiên và lượng tử hóa feature raw bằng một input scale chung. Với dải feature không đồng nhất, artifact cũ có input scale `0.12310`, zero-point `-125`; metadata ghi top-1 agreement `0.0703` và maximum probability error `1.0` trên 512 mẫu train. Đây là train diagnostic, không phải CV.
+
+Nhánh sửa giữ preprocessing khớp với training: scaler fit trên train fold → chuẩn hóa 28 feature → TFLite full-integer INT8. Representative set mỗi fold gồm tối đa 256 windows lấy round-robin theo class/load/file từ train files; test files không dùng calibration. Final export dùng 256 windows đại diện 40 file.
+
+**Kết quả 10 seed × 4 file-held-out folds** (mean ± SD giữa seed):
+
+| Mức | Phiên bản | Accuracy | Macro-F1 |
+|---|---|---:|---:|
+| File | Keras Float32 | 91,50% ± 2,42% | 91,15% ± 2,89% |
+| File | TFLite Float32 | 91,50% ± 2,42% | 91,15% ± 2,89% |
+| File | TFLite INT8 | 92,00% ± 2,58% | 91,81% ± 2,85% |
+| Window | Keras Float32 | 90,41% ± 1,59% | 89,59% ± 1,69% |
+| Window | TFLite Float32 | 90,41% ± 1,59% | 89,59% ± 1,69% |
+| Window | TFLite INT8 | 90,41% ± 1,54% | 89,55% ± 1,58% |
+
+TFLite Float32 khớp Keras trên test folds (max probability error quan sát `6.71e-7`). INT8 có top-1 agreement trung bình theo fold `99.37%`, MAE xác suất OOF `0.00376`, P95 `0.01525`, max `0.89658`. Max error xảy ra ở một window IR mà Keras dự đoán sai `B`, còn INT8 dự đoán đúng `IR`; vì vậy cần xem sai số xác suất cùng nhãn/dự đoán, không chỉ nhìn max.
+
+Input final INT8 có shape `[1, 28]`, dtype int8, scale `0.0468812`, zero-point `-58`; output `[1, 4]`, thứ tự `Normal, IR, OR, B`. Flatbuffer final là **4.504 bytes**. Qua các fold, tỷ lệ saturation input trung bình `0.095%`, nhưng lớn nhất `6.15%` ở `envelope_BSF_h2` và `5.79%` ở `time_mean` trên một số fold held-out. Đây là điểm cần tiếp tục theo dõi, dù metric tổng thể gần Float32.
+
+**Kết luận hiện tại: cần cải thiện/xác nhận thêm trước triển khai.** Đánh giá PC cho thấy INT8 đã khắc phục lỗi nghiêm trọng của input raw-scale và giữ chất lượng phân loại gần Float32. Chưa đo RAM/latency/Flash runtime hoặc xác nhận tương thích trên STM32F4/Cube.AI; kích thước TFLite không phải số đo Flash/SRAM thực tế trên board. Chi tiết, confusion matrix và CI: [báo cáo INT8](./reports/INT8_FIX_REPORT.md).
+
 ## 10. Câu hỏi nghiên cứu và giả thuyết
 
 - **RQ1 (tài nguyên).** Hybrid tiết kiệm bao nhiêu tài nguyên phần cứng (chu kỳ khối envelope, tổng chu kỳ chẩn đoán, Flash, SRAM) so với Hilbert Transform triển khai trên cùng MCU, ở mức khối và ở mức toàn pipeline? Chỉ kết luận khi đã đo trên board.
@@ -410,6 +446,7 @@ Các notebook PC hiện đã tạo đầu ra cho fidelity (40 file) và phân lo
 - [ ] Chốt ngưỡng trước khi chạy: ρ₀, x dB, ε, δ, η (mục 10)
 - [ ] Chốt phương án Hilbert-MCU: N, kiểu số (float32), thư viện FFT và phiên bản
 - [ ] Chốt cách xử lý biên của Hilbert theo cửa sổ (bỏ mẫu hai đầu mỗi khối rồi ghép với stride 1024, hay giữ nguyên cả khối), vì quyết định mức méo biên được đo
+- [x] Sửa và đánh giá nhánh INT8 standardized-input theo file-held-out folds; lưu kết quả và giới hạn trong `reports/INT8_FIX_REPORT.md`
 - [ ] Đo MCU: part number STM32F4, xung nhịp, toolchain, cờ biên dịch; nếu không có board thì giới hạn kết luận ở PC
 
 ## 14. Trích dẫn
